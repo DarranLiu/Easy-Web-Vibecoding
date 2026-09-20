@@ -5,8 +5,8 @@ them before". Every IP that ever authenticates is recorded with when it was
 first and last seen, how often, and which devices came from it. You then name
 the ones you recognise, and anything still unnamed shows up as 陌生.
 
-Same flock'd-file pattern as presence.py, and for the same reason: cc-web and
-cc-web-tls are separate processes and must share one ledger.
+The file uses the same locking pattern as presence.py so multiple backend
+workers or entry points can share one consistent ledger.
 """
 import fcntl
 import json
