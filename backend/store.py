@@ -10,6 +10,8 @@ import os
 import threading
 from pathlib import Path
 
+from backend.private_files import write_private_json
+
 STORE = Path(os.environ.get("CC_WEB_STORE", str(Path.home() / ".cc-web-tabs.json")))
 _lock = threading.RLock()
 
@@ -22,10 +24,7 @@ def _load():
 
 
 def _save(tabs):
-    STORE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STORE.with_suffix(STORE.suffix + ".tmp")
-    tmp.write_text(json.dumps(tabs, ensure_ascii=False, indent=2))
-    tmp.replace(STORE)
+    write_private_json(STORE, tabs, indent=2)
 
 
 def list_tabs():
@@ -84,10 +83,7 @@ def set_group_label(cwd: str, label: str):
             g[cwd] = label
         else:
             g.pop(cwd, None)
-        GROUPS.parent.mkdir(parents=True, exist_ok=True)
-        tmp = GROUPS.with_suffix(GROUPS.suffix + ".tmp")
-        tmp.write_text(json.dumps(g, ensure_ascii=False, indent=2))
-        tmp.replace(GROUPS)
+        write_private_json(GROUPS, g, indent=2)
 
 
 # --- Manual (user-created) groups -------------------------------------------
@@ -104,10 +100,7 @@ def get_manual_groups() -> list:
 
 
 def _save_manual(lst):
-    MANUAL.parent.mkdir(parents=True, exist_ok=True)
-    tmp = MANUAL.with_suffix(MANUAL.suffix + ".tmp")
-    tmp.write_text(json.dumps(lst, ensure_ascii=False, indent=2))
-    tmp.replace(MANUAL)
+    write_private_json(MANUAL, lst, indent=2)
 
 
 def add_manual_group(name):

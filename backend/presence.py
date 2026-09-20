@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from backend import known_ips
+from backend.private_files import open_private
 
 STORE = Path(os.environ.get("CC_WEB_PRESENCE", str(Path.home() / ".cc-web-presence.json")))
 TTL = 30.0               # seconds; the frontend heartbeats every ~10s
@@ -51,8 +52,7 @@ def _prune(data):
 def _mutate(fn):
     """Read-modify-write the shared file under an exclusive lock."""
     with _lock:
-        STORE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(STORE, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = open_private(STORE, os.O_RDWR | os.O_CREAT)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             raw = os.read(fd, 4 << 20)

@@ -18,6 +18,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from backend.private_files import write_private_json
+
 HOSTS_FILE = Path(os.environ.get("CC_WEB_GPU_HOSTS", str(Path.home() / ".cc-web-gpu-hosts.json")))
 CACHE_TTL = 3.0          # seconds; a panel refreshing faster than this is served from cache
 PROBE_TIMEOUT = 12       # seconds per host
@@ -49,7 +51,7 @@ _SCRIPT = (
     "nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader,nounits; "
     "echo '@@PROCS@@'; "
     "nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits | tr -d ' ' | "
-    "while read p; do [ -n \"$p\" ] && ps -o pid=,user=,etime=,args= -p \"$p\" 2>/dev/null | head -1; done"
+    "while read p; do [ -n \"$p\" ] && ps -o pid=,user=,etime=,comm= -p \"$p\" 2>/dev/null | head -1; done"
 )
 
 
@@ -65,10 +67,7 @@ def _read_hosts():
 
 
 def _write_hosts(hosts):
-    HOSTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = HOSTS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(hosts, ensure_ascii=False, indent=2))
-    tmp.replace(HOSTS_FILE)
+    write_private_json(HOSTS_FILE, hosts, indent=2)
 
 
 def list_hosts():
@@ -197,11 +196,7 @@ def _parse(out: str):
 
 def _short_cmd(cmd: str, limit: int = 90):
     cmd = " ".join(cmd.split())
-    # A venv python's full interpreter path tells you nothing; the script does.
-    parts = cmd.split(" ")
-    if parts and parts[0].endswith(("python", "python3")) and len(parts) > 1:
-        parts[0] = "python"
-        cmd = " ".join(parts)
+    # Only `comm` is collected. Full argv often contains tokens or private paths.
     return cmd if len(cmd) <= limit else cmd[: limit - 1] + "…"
 
 

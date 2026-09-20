@@ -42,6 +42,17 @@ app = FastAPI(title="Web CC Terminal")
 AUTH_COOKIE = "cc_web_token"
 
 
+@app.middleware("http")
+async def privacy_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 # --- Auth -------------------------------------------------------------------
 def _extract_token(request: Request) -> str:
     auth = request.headers.get("authorization", "")
@@ -291,10 +302,15 @@ async def term_image(cwd: str = Form(...), file: UploadFile = File(...), _=Depen
         raise HTTPException(status_code=400, detail="仅支持图片文件")
     img_dir = base / ".cc-web-images"
     try:
-        img_dir.mkdir(exist_ok=True)
+        img_dir.mkdir(mode=0o700, exist_ok=True)
+        if img_dir.is_symlink() or not img_dir.is_dir():
+            raise HTTPException(status_code=400, detail="图片目录无效")
+        os.chmod(img_dir, 0o700)
         fname = "img-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3) + ext
         target = img_dir / fname
-        with open(target, "wb") as out:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(target, flags, 0o600)
+        with os.fdopen(fd, "wb") as out:
             shutil.copyfileobj(file.file, out)
     except HTTPException:
         raise
@@ -314,7 +330,16 @@ def fs_download(path: str, inline: int = 0, _=Depends(require_auth)):
     # playback at all) depends on.
     if inline:
         media = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-        return FileResponse(str(p), media_type=media)
+        if not (media.startswith(("image/", "video/", "audio/")) or media == "application/pdf"):
+            raise HTTPException(status_code=415, detail="此文件类型不支持内嵌预览")
+        return FileResponse(
+            str(p),
+            media_type=media,
+            headers={
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+                "Cross-Origin-Resource-Policy": "same-origin",
+            },
+        )
     return FileResponse(str(p), filename=p.name)
 
 

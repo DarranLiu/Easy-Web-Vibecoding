@@ -17,6 +17,7 @@ caddy
 
 .cc-web-images/
 .cc-web-*.json
+.cc-web-token
 screenshots-local/
 
 .DS_Store

@@ -15,6 +15,8 @@ import threading
 import time
 from pathlib import Path
 
+from backend.private_files import open_private
+
 STORE = Path(os.environ.get("CC_WEB_KNOWN_IPS", str(Path.home() / ".cc-web-known-ips.json")))
 _lock = threading.RLock()
 
@@ -27,8 +29,7 @@ MAX_ENTRIES = 500          # ledger is a monitoring aid, not an audit log
 
 def _mutate(fn):
     with _lock:
-        STORE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(STORE, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = open_private(STORE, os.O_RDWR | os.O_CREAT)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             raw = os.read(fd, 8 << 20)

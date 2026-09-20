@@ -39,7 +39,7 @@ export CC_WEB_DEFAULT_DIR="$HOME/projects"
 ./run.sh
 ```
 
-第一次运行会创建 `.venv`、安装 Python 依赖，并打印访问地址与随机 Token。默认只监听：
+第一次运行会创建 `.venv`、安装 Python 依赖，并生成随机 Token。交互式终端会直接显示 Token；非交互式启动会把它写入权限为 `0600` 的 `~/.cc-web-token`，避免进入服务日志。默认只监听：
 
 ```text
 http://127.0.0.1:8000
@@ -91,7 +91,7 @@ http://127.0.0.1:8000
 
 ## 06 · GPU 和磁盘放在同一个资源面板
 
-GPU 页展示显存、利用率、温度、功耗、用户和进程。远程主机可通过免密 SSH 读取 `nvidia-smi`，无需在远端安装本项目。
+GPU 页展示显存、利用率、温度、功耗、用户和进程名。它不会采集完整命令参数，避免参数里的 Token 或私人路径进入面板。远程主机可通过免密 SSH 读取 `nvidia-smi`，无需在远端安装本项目。
 
 ![GPU 资源监控](docs/images/resources-gpu.png)
 
@@ -183,8 +183,10 @@ FastAPI 后端 ── attach ── tmux session ── Claude / Codex / OpenCod
 - 不要把 `CC_WEB_ROOTS` 直接设为 `/`。
 - 不要提交 `.env`、Token、证书、日志和状态 JSON。
 - 当前没有多租户隔离、角色权限和只读访客模式。
+- 通过认证的人会共享终端、文件、资源和连接信息，只应把 Token 交给受信任的操作者。
+- IP 与设备类型会保存在本机的私有状态文件中；可以在“IP 记录”里删除。
 
-登录状态使用 HttpOnly、SameSite Cookie；Token 不进入下载链接、WebSocket URL、浏览器历史或代理访问日志。详见 [安全策略](SECURITY.md)。
+登录状态使用 HttpOnly、SameSite Cookie；Token 不进入下载链接、WebSocket URL、浏览器历史或代理访问日志。API 和文件预览响应禁止缓存，运行时状态文件统一使用 `0600`。详见 [安全策略](SECURITY.md)。
 
 ## 测试
 

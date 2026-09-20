@@ -23,6 +23,8 @@ import threading
 import time
 from pathlib import Path
 
+from backend.private_files import open_private
+
 CACHE = Path(os.environ.get("CC_WEB_DISK_CACHE", str(Path.home() / ".cc-web-disk.json")))
 SCAN_TIMEOUT = 900          # seconds; a 2 TB depth-1 walk is ~35s, leave headroom
 FRESH_FOR = 30 * 60         # a snapshot older than this is offered with a "stale" hint
@@ -100,8 +102,7 @@ def mounts(addr: str):
 # --- cache ------------------------------------------------------------------
 def _mutate(fn):
     with _lock:
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(CACHE, os.O_RDWR | os.O_CREAT, 0o600)
+        fd = open_private(CACHE, os.O_RDWR | os.O_CREAT)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             raw = os.read(fd, 32 << 20)

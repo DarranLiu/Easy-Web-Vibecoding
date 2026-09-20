@@ -54,6 +54,7 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_PORT` | 监听端口，默认 `8000`。 |
 | `CC_WEB_AUTH` | `1` 启用鉴权；`0` 仅供本机调试。 |
 | `CC_WEB_TOKEN` | 登录 Token。`run.sh` 未收到时会临时生成。 |
+| `CC_WEB_TOKEN_FILE` | 非交互启动时保存随机 Token 的私有文件；默认 `~/.cc-web-token`。 |
 
 ### 目录与程序
 
@@ -82,7 +83,9 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_PRESENCE` | 当前在线状态。 |
 | `CC_WEB_KNOWN_IPS` | 已见过的来源 IP。 |
 
-状态文件可能包含目录、主机名和来源 IP，不应提交到 Git。
+状态文件可能包含目录、主机名和来源 IP，不应提交到 Git。程序会强制使用 `0600`；从旧版本升级后，下一次写入也会收紧已有文件权限。
+
+浏览器端不会保存 Token，但会在 `localStorage` 中保留主题、布局、终端 ID 和最近打开的文件目录，方便恢复界面。共享电脑上使用独立浏览器用户配置，并在不再使用时清理该站点数据。
 
 ## 多进程说明
 

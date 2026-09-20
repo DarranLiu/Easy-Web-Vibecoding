@@ -168,6 +168,7 @@ def _open_flags(base: int) -> int:
 def _shared_lock():
     try:
         fd = os.open(_LOCK_PATH, _open_flags(os.O_CREAT | os.O_RDWR), 0o600)
+        os.fchmod(fd, 0o600)
     except OSError as exc:
         raise CodexUsageError("Unable to open the shared Codex usage lock") from exc
     with os.fdopen(fd, "r+b") as lock_file:
@@ -196,6 +197,7 @@ def _write_record(record: dict[str, Any]) -> None:
     temp = _CACHE_PATH.with_name(f"{_CACHE_PATH.name}.{os.getpid()}.tmp")
     try:
         fd = os.open(temp, _open_flags(os.O_CREAT | os.O_WRONLY | os.O_TRUNC), 0o600)
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(record, handle, ensure_ascii=True, separators=(",", ":"))
             handle.flush()
