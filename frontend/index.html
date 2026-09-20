@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#F5F5F5" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="application-name" content="CC Terminal" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <title>CC Terminal</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("cc_theme") || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
+  <link rel="preload" href="/vendor/fonts/DejaVuSansMono.ttf?v=1" as="font" type="font/ttf" crossorigin />
+  <link rel="icon" href="/app-icon.svg?v=1" type="image/svg+xml" />
+  <link rel="manifest" href="/manifest.webmanifest?v=1" />
+  <link rel="stylesheet" href="/vendor/xterm.min.css" />
+  <link rel="stylesheet" href="/style.css?v=1" />
+</head>
+<body>
+  <div id="app">
+    <div id="titlebar" role="banner">
+      <button id="btn-sidebar" class="tb-btn" title="隐藏侧边栏" aria-label="隐藏侧边栏">☰</button>
+      <div class="app-brand" aria-label="CC Terminal">
+        <span class="app-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span class="app-brand-name">CC Terminal</span>
+      </div>
+      <div class="titlebar-divider" aria-hidden="true"></div>
+      <div class="titlebar-title" id="titlebar-title">CC Terminal</div>
+      <div class="titlebar-actions">
+        <button id="btn-gpu" class="tb-btn" title="资源监控（显卡 / 存储）" aria-label="资源监控">▦</button>
+        <button id="btn-files" class="tb-btn" title="文件浏览与预览" aria-label="文件">▤</button>
+        <button id="tl-green" class="tb-btn" title="全屏" aria-label="全屏">⛶</button>
+      </div>
+    </div>
+    <div id="body">
+    <div id="scrim"></div>
+
+    <aside id="sidebar">
+      <div class="side-head">
+        <div class="sidebar-toolbar">
+          <button id="new-term" class="toolbar-btn primary" title="新终端"><span class="toolbar-ic">＋</span><span>新终端</span></button>
+          <button id="new-group" class="toolbar-btn" title="新建分组" aria-label="新建分组"><span class="toolbar-ic">▣</span></button>
+        </div>
+      </div>
+      <div id="chat-list" class="chat-list"></div>
+      <div class="side-presence">
+        <button id="presence-btn" class="presence-btn" aria-expanded="false" aria-controls="presence-panel">
+          <span class="pdot"></span><span>在线 <b id="presence-n">·</b></span>
+          <span class="caret">⌃</span>
+        </button>
+        <div id="presence-panel" class="presence-panel hidden">
+          <div class="pp-head">当前在线 IP</div>
+          <div id="pp-list" class="pp-list"></div>
+          <button id="ips-open" class="link-btn pp-more">☰ IP 记录 / 熟人名单</button>
+          <div class="pp-note">数字是当前在线的页面数。给认识的 IP 加备注,它就变成熟人;没备注的显示为「陌生」并亮起警告。</div>
+        </div>
+      </div>
+      <div class="side-foot">
+        <button id="theme-toggle" class="link-btn">◐ 深色</button>
+        <button id="set-token" class="link-btn">◇ Token</button>
+        <button id="refresh" class="link-btn">↻ 刷新</button>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="topbar">
+        <button class="icon-btn" id="hamburger" aria-label="菜单" aria-controls="sidebar" aria-expanded="false">☰</button>
+        <span class="topbar-title" id="topbar-title">CC Terminal</span>
+        <span class="topbar-presence" id="topbar-presence"></span>
+        <span class="topbar-status" id="topbar-status" role="status" aria-live="polite"></span>
+        <button id="btn-files-m" class="icon-btn" title="文件浏览与预览" aria-label="文件">▤</button>
+        <button id="btn-gpu-m" class="icon-btn" title="资源监控(显卡 / 存储)" aria-label="资源监控">▦</button>
+      </div>
+
+      <section id="empty" class="empty">
+        <div class="empty-inner">
+          <div class="empty-mark" aria-hidden="true"><span class="app-mark"><i></i><i></i><i></i><i></i></span></div>
+          <h1>暂无活动终端</h1>
+          <p>Claude、Codex、OpenCode 与 Shell 会话</p>
+          <button id="empty-new" class="new-btn lg">＋ 新终端</button>
+        </div>
+      </section>
+
+      <section id="term-view" class="hidden">
+        <header id="term-header">
+          <span class="status-dot green" id="term-dot"></span>
+          <span id="term-title">—</span>
+          <span id="term-path"></span>
+          <span class="spacer"></span>
+          <span id="term-conn" class="conn" role="status" aria-live="polite">—</span>
+          <span class="command-divider" aria-hidden="true"></span>
+          <span class="sizer">
+            <button id="size-dn" aria-label="缩小">−</button>
+            <span class="val" id="size-val">13</span>
+            <button id="size-up" aria-label="放大">＋</button>
+          </span>
+          <span class="command-divider" aria-hidden="true"></span>
+          <button id="btn-select" class="hdr-btn" title="切换选择模式" aria-label="选择模式">▣</button>
+          <button id="btn-copy" class="hdr-btn" title="复制；长按复制全部历史" aria-label="复制">⧉</button>
+          <button id="btn-img" class="hdr-btn" title="发送图片" aria-label="发送图片">⌁</button>
+          <span class="command-divider" aria-hidden="true"></span>
+          <button id="btn-split" class="hdr-btn" title="分屏（最多 4 格）" aria-label="分屏">⊞</button>
+          <button id="btn-dir" class="hdr-btn" title="分屏方向：自动 / 左右 / 上下" aria-label="分屏方向">⇄</button>
+          <span class="command-divider touch-divider" aria-hidden="true"></span>
+          <button id="btn-kbd" class="hdr-btn" title="打开或收起键盘" aria-label="键盘">⌨</button>
+          <button id="btn-aux" class="hdr-btn" title="辅助键" aria-label="辅助键">⌥</button>
+          <button id="btn-fs" class="hdr-btn" title="全屏" aria-label="全屏">⛶</button>
+          <span class="command-divider" aria-hidden="true"></span>
+          <button id="btn-stop" class="hdr-btn danger">停止</button>
+        </header>
+        <div id="panes" class="panes" data-n="1"></div>
+        <div id="auxbar" class="auxbar"></div>
+      </section>
+    </main>
+    </div>
+  </div>
+
+  <!-- New terminal: directory picker -->
+  <div id="dir-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dir-modal-title">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="dir-modal-title">新终端 · 选择目录</h3>
+        <button id="dir-close" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+      </div>
+      <div id="dir-crumb" class="crumb"></div>
+      <div class="dir-toolbar">
+        <label class="dir-search">
+          <input id="dir-search" type="search" placeholder="搜索当前目录" autocomplete="off" spellcheck="false" />
+        </label>
+        <button id="dir-mkdir" class="btn-sm">＋ 新建文件夹</button>
+        <button id="dir-touch" class="btn-sm">＋ 新建文件</button>
+        <button id="dir-upload" class="btn-sm">⬆ 上传文件</button>
+        <input id="dir-upload-input" type="file" multiple hidden />
+      </div>
+      <div id="dir-list" class="dir-list"></div>
+      <div class="modal-foot">
+        <div class="cur" id="dir-current"></div>
+        <div id="mode-row" class="mode-row hidden">
+          <span class="mode-hint">在此目录开：</span>
+          <div class="mode-btns">
+            <button class="mode-btn" data-type="claude" data-mode="new">Claude · 新对话</button>
+            <button class="mode-btn" data-type="claude" data-mode="continue">Claude · 续上次</button>
+            <button class="mode-btn" data-type="claude" data-mode="resume">Claude · 选会话</button>
+            <button class="mode-btn" id="mode-codex" data-type="codex" data-mode="new">Codex</button>
+            <button class="mode-btn" id="mode-opencode" data-type="opencode" data-mode="new">OpenCode</button>
+            <button class="mode-btn" data-type="shell" data-mode="new">普通终端</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Send image into the terminal: drop / paste / pick -->
+  <div id="img-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="img-modal-title">
+    <div class="modal-box img-box">
+      <div class="modal-head">
+        <h3 id="img-modal-title">发送图片到终端</h3>
+        <button id="img-close" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+      </div>
+      <div id="img-drop" class="img-drop" tabindex="0">
+        <div class="img-drop-ic">▧</div>
+        <div class="img-drop-main">点击选择图片</div>
+        <div class="img-drop-sub">也可 <b>Ctrl+V 粘贴</b> · 或把图片<b>拖到这里</b></div>
+        <input id="img-file-input" type="file" accept="image/*" multiple hidden />
+      </div>
+      <div id="img-previews" class="img-previews"></div>
+      <div class="modal-foot img-foot">
+        <div class="img-hint" id="img-hint">支持 png / jpg / gif / webp,可一次多张</div>
+        <button id="img-send" class="btn-sm primary" disabled>发送到终端</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GPU monitor -->
+  <div id="gpu-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="资源监控">
+    <div class="modal-box gpu-box">
+      <div class="modal-head">
+        <div class="res-tabs" role="tablist">
+          <button id="tab-gpu" class="res-tab on" role="tab" aria-selected="true">▦ 显卡</button>
+          <button id="tab-disk" class="res-tab" role="tab" aria-selected="false">▤ 存储</button>
+        </div>
+        <div class="gpu-head-right">
+          <span id="gpu-age" class="gpu-age"></span>
+          <button id="gpu-reload" class="btn-sm">↻ 刷新</button>
+          <button id="gpu-close" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+      </div>
+      <div id="gpu-body" class="gpu-body"><div class="gpu-loading">读取中…</div></div>
+      <div id="disk-body" class="gpu-body hidden"><div class="gpu-loading">读取中…</div></div>
+      <div class="modal-foot gpu-foot" id="gpu-foot">
+        <form id="gpu-add" class="gpu-add">
+          <input id="gpu-addr" type="text" placeholder="添加服务器 (IP 或 user@host)" autocapitalize="off" autocorrect="off" spellcheck="false" />
+          <input id="gpu-name" type="text" placeholder="显示名(可选)" autocapitalize="off" autocorrect="off" spellcheck="false" />
+          <button type="submit" class="btn-sm">＋ 添加</button>
+        </form>
+        <div class="gpu-note">远程机器通过免密 SSH 读取 nvidia-smi,需要本机能直接 ssh 过去。</div>
+      </div>
+      <div class="modal-foot gpu-foot hidden" id="disk-foot">
+        <div class="gpu-note">容量(df)实时读取;目录用量(du)在后台扫描后缓存 —— 点目录可逐层下钻,找出到底是谁占的空间。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- IP ledger: 熟人 / 陌生人 -->
+  <div id="ips-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ips-modal-title">
+    <div class="modal-box ips-box">
+      <div class="modal-head">
+        <h3 id="ips-modal-title">IP 记录</h3>
+        <button id="ips-close" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+      </div>
+      <div id="ips-body" class="ips-body"><div class="pp-note">读取中…</div></div>
+      <div class="modal-foot">
+        <div class="pp-note">每个通过认证的 IP 都会被记下来。加了备注的算熟人,其余算陌生。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- File browser + previewer -->
+  <div id="files-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="files-modal-title">
+    <div class="modal-box files-box">
+      <div class="modal-head">
+        <h3 id="files-modal-title">文件</h3>
+        <div class="gpu-head-right">
+          <button id="files-view" class="btn-sm" title="列表 / 网格视图">▦ 网格</button>
+          <button id="files-reload" class="btn-sm" title="刷新">↻</button>
+          <button id="files-close" class="icon-btn" title="关闭" aria-label="关闭">✕</button>
+        </div>
+      </div>
+      <div id="files-crumb" class="crumb"></div>
+      <div class="dir-toolbar">
+        <button id="files-up" class="btn-sm">↑ 上级</button>
+        <label class="dir-search">
+          <input id="files-search" type="search" placeholder="筛选当前目录" autocomplete="off" spellcheck="false" autocapitalize="off" />
+        </label>
+        <button id="files-home" class="btn-sm">⌂ 常用目录</button>
+      </div>
+      <div id="files-list" class="files-list"><div class="gpu-loading">读取中…</div></div>
+      <div class="modal-foot">
+        <div class="gpu-note" id="files-note"></div>
+      </div>
+    </div>
+
+    <div id="fv" class="fv hidden">
+      <div class="fv-bar">
+        <button id="fv-close" class="icon-btn" title="返回">‹ 返回</button>
+        <span class="fv-name" id="fv-name"></span>
+        <span class="fv-meta" id="fv-meta"></span>
+        <button id="fv-prev" class="btn-sm" title="上一个">‹</button>
+        <button id="fv-next" class="btn-sm" title="下一个">›</button>
+        <a id="fv-dl" class="btn-sm" download>⬇ 下载</a>
+      </div>
+      <div id="fv-body" class="fv-body"></div>
+    </div>
+  </div>
+
+  <!-- Token entry -->
+  <div id="login" class="login hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="login-center">
+      <div class="login-avatar"><span class="app-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span></div>
+      <div class="login-name" id="login-title">CC Terminal</div>
+      <form id="login-form" class="login-field">
+        <input id="login-input" type="password" placeholder="输入访问 Token" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off" />
+        <button type="submit" id="login-go" class="login-go" aria-label="进入">→</button>
+      </form>
+      <div class="login-hint" id="login-hint">输入 Token 后按回车</div>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div id="tooltip" class="hidden" role="tooltip"></div>
+
+  <script src="/vendor/xterm.min.js"></script>
+  <script src="/vendor/addon-fit.min.js"></script>
+  <script src="/app.js?v=1"></script>
+</body>
+</html>

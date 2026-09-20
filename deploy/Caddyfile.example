@@ -1,0 +1,10 @@
+terminal.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8000
+
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+}

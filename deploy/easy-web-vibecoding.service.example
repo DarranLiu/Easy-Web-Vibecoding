@@ -1,0 +1,14 @@
+[Unit]
+Description=Easy Web Vibecoding terminal
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/Easy-Web-Vibecoding
+EnvironmentFile=%h/.config/easy-web-vibecoding/env
+ExecStart=/absolute/path/to/Easy-Web-Vibecoding/.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
