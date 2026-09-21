@@ -23,7 +23,7 @@ jobs:
       - run: pip install -r backend/requirements.txt
       - run: python -m unittest discover -s tests -v
       - run: bash -n run.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - run: node --check frontend/app.js
