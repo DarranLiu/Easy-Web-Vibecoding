@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/desktop-split.png" alt="Easy Web Vibecoding split terminal workspace">
+  <img src="docs/images/en/desktop-split.png" alt="Easy Web Vibecoding split terminal workspace">
 </p>
 
 <h1 align="center">Easy Web Vibecoding</h1>
@@ -60,62 +60,62 @@ The host needs Python 3.10+ and `tmux`. Install and sign in to Claude Code, Code
 
 Choose a project, then launch a new Claude session, resume Claude, start Codex, OpenCode, or a normal shell. Tools that are not installed are omitted instead of becoming broken menu items.
 
-![New terminal and directory picker](docs/images/new-terminal.png)
+![New terminal and directory picker](docs/images/en/new-terminal.png)
 
 ### Work in up to four panes
 
 Each tab owns an independent tmux session. Arrange terminals side by side, stacked, or automatically; drag the divider, swap panes, and switch tabs without stopping the underlying task.
 
-![Two terminal panes](docs/images/desktop-split.png)
+![Two terminal panes](docs/images/en/desktop-split.png)
 
 ### Copy terminal output without breaking Ctrl+C
 
 Select text and use the copy button, `Ctrl+Shift+C` on Windows/Linux, or `Cmd+C` on macOS/iPad. Plain `Ctrl+C` still sends an interrupt. Selection mode makes mouse-driven TUIs easier to copy from, and a long press or right click copies full scrollback.
 
-![Terminal selection and copy feedback](docs/images/copy-text.png)
+![Terminal selection and copy feedback](docs/images/en/copy-text.png)
 
 Text pastes directly into the focused terminal. The image action accepts a file, a clipboard screenshot, or drag and drop. It saves the image under `.cc-web-images/` in the working directory and inserts the path into the terminal instead of pushing binary data through the PTY.
 
-![Paste or drag an image](docs/images/send-image.png)
+![Paste or drag an image](docs/images/en/send-image.png)
 
 ### Manage and preview project files
 
 Browse, filter, upload, download, create, rename, and delete files inside the `CC_WEB_ROOTS` allowlist.
 
-![File manager](docs/images/files.png)
+![File manager](docs/images/en/files.png)
 
 Preview common text, image, video, audio, and PDF files without opening a remote desktop.
 
-![File preview](docs/images/file-preview.png)
+![File preview](docs/images/en/file-preview.png)
 
 ### Monitor the machine without leaking command lines
 
 The resource panel shows GPU memory, utilization, temperature, power, user, and process name. It deliberately omits full process arguments, where tokens and private paths often appear. Remote GPU hosts can be queried over key-based SSH.
 
-![GPU resource monitor](docs/images/resources-gpu.png)
+![GPU resource monitor](docs/images/en/resources-gpu.png)
 
 Storage starts with filesystem capacity and drills down into directory usage. Slow `du` scans run in the backend and are cached.
 
-![Storage usage](docs/images/resources-storage.png)
+![Storage usage](docs/images/en/resources-storage.png)
 
 ### Recognize connected devices
 
 The current release uses one shared token, not a multi-tenant account system. The connection view records authenticated source IPs, device classes, first/last seen times, and visit counts. You can add a note, flag an unfamiliar source, or remove a record.
 
-![Connection records](docs/images/connections.png)
+![Connection records](docs/images/en/connections.png)
 
 ### Keep Codex usage subtle
 
 Only the focused Codex pane shows its remaining percentage and reset time. Hidden tabs and other tools do not poll. Multiple entry points share a cache and file lock, so the server reads usage at most once every ten minutes.
 
-![Codex usage indicator](docs/images/codex-usage.png)
+![Codex usage indicator](docs/images/en/codex-usage.png)
 
 ### Use it from a phone
 
 The mobile layout keeps practical terminal keys such as `Esc`, `Tab`, `Ctrl`, and arrows. Visual Viewport resizing keeps the cursor above the software keyboard.
 
 <p align="center">
-  <img src="docs/images/mobile-terminal.png" width="390" alt="Mobile terminal workspace">
+  <img src="docs/images/en/mobile-terminal.png" width="390" alt="Mobile terminal workspace">
 </p>
 
 ## Details that matter in daily use

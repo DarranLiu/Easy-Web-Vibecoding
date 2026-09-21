@@ -11,16 +11,18 @@ The strongest story is not "another web terminal." It is the collection of daily
 ## Public assets
 
 - Repository: <https://github.com/DarranLiu/Easy-Web-Vibecoding>
-- Main workspace: `docs/images/desktop-split.png`
-- New terminal flow: `docs/images/new-terminal.png`
-- Copy and image workflows: `docs/images/copy-text.png`, `docs/images/send-image.png`
-- Files and preview: `docs/images/files.png`, `docs/images/file-preview.png`
-- Resources: `docs/images/resources-gpu.png`, `docs/images/resources-storage.png`
-- Connections and mobile: `docs/images/connections.png`, `docs/images/mobile-terminal.png`
+- English assets: `docs/images/en/`
+- Chinese assets: `docs/images/`
+- Main workspace: `docs/images/en/desktop-split.png`
+- New terminal flow: `docs/images/en/new-terminal.png`
+- Copy and image workflows: `docs/images/en/copy-text.png`, `docs/images/en/send-image.png`
+- Files and preview: `docs/images/en/files.png`, `docs/images/en/file-preview.png`
+- Resources: `docs/images/en/resources-gpu.png`, `docs/images/en/resources-storage.png`
+- Connections and mobile: `docs/images/en/connections.png`, `docs/images/en/mobile-terminal.png`
 
 All included screenshots use synthetic data. Do not replace them with production captures unless every path, address, session name, account name, hostname, file, and hardware process has been reviewed.
 
-For GitHub's social preview, upload `docs/images/desktop-split.png` under **Settings > General > Social preview**. GitHub recommends a 1280 x 640 image for best display; the supplied 1440 x 761 image is lightweight and close to that ratio. A purpose-made 1280 x 640 banner can replace it later.
+For GitHub's social preview, upload `docs/images/en/desktop-split.png` under **Settings > General > Social preview**. GitHub recommends a 1280 x 640 image for best display; a purpose-made 1280 x 640 banner can replace this product screenshot later.
 
 ## Launch order
 
