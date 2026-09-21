@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible problem without including private data
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Remove tokens, cookies, hostnames, public URLs, IP addresses, usernames, and private paths from every field and attachment.
+  - type: checkboxes
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials and private infrastructure details.
+          required: true
+        - label: This is not an unpatched security vulnerability.
+          required: true
+  - type: input
+    attributes:
+      label: Version or commit
+      placeholder: v0.1.0 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Terminal type
+      options:
+        - Claude Code
+        - Codex
+        - OpenCode
+        - Shell
+        - Not terminal-specific
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Browser and operating system
+      placeholder: Edge 140 on Windows 11; server is Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: Include the expected result and the actual result.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Reproduction
+      description: Provide the smallest sanitized sequence of steps.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Sanitized diagnostics
+      description: Optional logs or screenshots with identifying information removed.
+      render: shell

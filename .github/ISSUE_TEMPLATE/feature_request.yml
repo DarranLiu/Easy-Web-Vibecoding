@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a focused improvement to the product
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    attributes:
+      label: Problem
+      description: What workflow is difficult today? Describe the need before the solution.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed behavior
+      description: What should the user be able to do?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives considered
+      description: What existing workflow or workaround did you try?
+  - type: checkboxes
+    attributes:
+      label: Scope check
+      options:
+        - label: This request is about the web workspace, not an upstream coding agent or model API.
+          required: true
+        - label: I removed private infrastructure and credentials from this request.
+          required: true

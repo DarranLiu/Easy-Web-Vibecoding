@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and workflow ideas
+    url: https://github.com/DarranLiu/Easy-Web-Vibecoding/discussions
+    about: Ask for help or discuss a use case
+  - name: Private security report
+    url: https://github.com/DarranLiu/Easy-Web-Vibecoding/security/advisories/new
+    about: Report vulnerabilities and sensitive security findings privately
