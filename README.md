@@ -169,7 +169,7 @@ This is a remote terminal. Anyone with access can generally act with the permiss
 - Share the token only with trusted operators. There are no per-user roles or read-only guests yet.
 - Never commit `.env`, tokens, certificates, logs, state JSON, or real deployment screenshots.
 
-Authentication uses an HttpOnly, SameSite cookie. Tokens are kept out of download links, WebSocket URLs, browser history, and default access logs. Runtime state files use mode `0600`. Read the complete [security policy](SECURITY.md) and report vulnerabilities privately.
+Authentication exchanges the master token for a server-signed, time-limited HttpOnly and SameSite session cookie; the raw token is not stored in the browser. Tokens are kept out of download links, WebSocket URLs, browser history, and default access logs. Runtime state files use mode `0600`. Read the complete [security policy](SECURITY.md) and report vulnerabilities privately.
 
 ## Test
 

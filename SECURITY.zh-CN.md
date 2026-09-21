@@ -16,7 +16,7 @@
 - 定期检查“在线”和“IP 记录”面板。
 - 不要提交状态 JSON、日志、证书、`.env` 或任何 Token。
 
-登录成功后，浏览器使用 `HttpOnly`、`SameSite=Strict` Cookie。下载和 WebSocket URL 不携带 Token。HTTPS 请求会得到 `Secure` Cookie。
+登录成功后，浏览器得到的是服务端签名的会话凭据，不是原始 Token。Cookie 使用 `HttpOnly`、`SameSite=Strict`，服务端有效期为 30 天；HTTPS 请求还会得到 `Secure`。浏览器存储、下载和 WebSocket URL 都不携带原始 Token。
 
 ## 已知边界
 
@@ -33,6 +33,7 @@
 - GPU 监控只读取进程名，不读取完整命令参数，避免参数中的密钥或私人路径进入 API。
 - 浏览器只在 `localStorage` 保存界面布局、终端 ID 和最近目录，不保存登录 Token 或终端输出。
 - API 与文件预览使用 `Cache-Control: no-store`；主动媒体预览带 CSP sandbox。
+- 文件路径经过真实路径和根目录包含关系校验；新建与上传不会跟随最终符号链接，重命名与删除操作的是白名单目录内的链接本身而不是链接目标。
 - 默认关闭 Uvicorn access log，避免文件 API 查询参数中的绝对路径进入日志；反向代理日志也应删除查询参数。
 - 粘贴图片会原样保存到工作目录的 `.cc-web-images/`，权限为目录 `0700`、文件 `0600`；原图自带的 EXIF 等元数据不会自动删除。
 

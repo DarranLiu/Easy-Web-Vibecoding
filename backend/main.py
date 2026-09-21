@@ -11,6 +11,8 @@ restartable); deleting a tab removes it for good.
 """
 import asyncio
 import fcntl
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
@@ -40,6 +42,7 @@ FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(title="Web CC Terminal")
 AUTH_COOKIE = "cc_web_token"
+SESSION_MAX_AGE = 60 * 60 * 24 * 30
 
 
 @app.middleware("http")
@@ -54,11 +57,11 @@ async def privacy_headers(request: Request, call_next):
 
 
 # --- Auth -------------------------------------------------------------------
-def _extract_token(request: Request) -> str:
+def _extract_bearer_token(request: Request) -> str:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:]
-    return getattr(request, "cookies", {}).get(AUTH_COOKIE, "")
+    return ""
 
 
 def _token_matches(token: str) -> bool:
@@ -70,10 +73,38 @@ def _token_matches(token: str) -> bool:
         return False
 
 
+def _session_signature(payload: str) -> str:
+    return hmac.new(
+        config.TOKEN.encode("utf-8"),
+        b"easy-web-vibecoding-session-v1:" + payload.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _new_session_cookie_value() -> str:
+    payload = f"{int(time.time())}.{secrets.token_urlsafe(16)}"
+    return f"{payload}.{_session_signature(payload)}"
+
+
+def _session_cookie_matches(value: str) -> bool:
+    try:
+        issued_raw, nonce, supplied = (value or "").split(".", 2)
+        issued = int(issued_raw)
+        age = int(time.time()) - issued
+        if not nonce or age < -300 or age > SESSION_MAX_AGE:
+            return False
+        expected = _session_signature(f"{issued_raw}.{nonce}")
+        return secrets.compare_digest(supplied.encode("ascii"), expected.encode("ascii"))
+    except (AttributeError, UnicodeError, ValueError):
+        return False
+
+
 def require_auth(request: Request):
     if not config.AUTH_ENABLED:
         return True
-    if not _token_matches(_extract_token(request)):
+    bearer_ok = _token_matches(_extract_bearer_token(request))
+    cookie = getattr(request, "cookies", {}).get(AUTH_COOKIE, "")
+    if not bearer_ok and not _session_cookie_matches(cookie):
         raise HTTPException(status_code=401, detail="bad or missing token")
     return True
 
@@ -81,7 +112,7 @@ def require_auth(request: Request):
 def check_ws_token(cookie_token: str = "") -> bool:
     if not config.AUTH_ENABLED:
         return True
-    return _token_matches(cookie_token)
+    return _session_cookie_matches(cookie_token)
 
 
 @app.post("/api/login")
@@ -97,23 +128,73 @@ async def login(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="bad token")
     response.set_cookie(
         AUTH_COOKIE,
-        token,
+        _new_session_cookie_value(),
         httponly=True,
         secure=request.url.scheme == "https",
         samesite="strict",
-        max_age=60 * 60 * 24 * 30,
+        max_age=SESSION_MAX_AGE,
         path="/",
     )
     return {"ok": True, "auth": True}
 
 
 # --- Directory browsing -----------------------------------------------------
+def _safe_name(name: str) -> str:
+    name = (name or "").strip()
+    separators = tuple(sep for sep in (os.path.sep, os.path.altsep) if sep)
+    if not name or name in (".", "..") or "\x00" in name or any(sep in name for sep in separators):
+        raise HTTPException(status_code=400, detail="名称非法")
+    return name
+
+
+def _real_roots() -> list[str]:
+    return [os.path.realpath(os.path.abspath(root)) for root in config.ROOTS]
+
+
+def _path_is_allowed(path: str) -> bool:
+    for root in _real_roots():
+        try:
+            if os.path.commonpath((root, path)) == root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def safe_resolve(path: str) -> Path:
-    p = Path(path).resolve()
-    for root in config.ROOTS:
-        if p == Path(root) or root in (str(a) for a in p.parents):
-            return p
+    if not isinstance(path, str) or not path.strip() or "\x00" in path:
+        raise HTTPException(status_code=400, detail="路径非法")
+    try:
+        resolved = os.path.realpath(os.path.abspath(path))
+    except (OSError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="路径非法")
+    if _path_is_allowed(resolved):
+        return Path(resolved)
     raise HTTPException(status_code=403, detail="目录不在允许浏览的范围内")
+
+
+def safe_resolve_entry(path: str) -> Path:
+    """Resolve the parent while preserving the final component itself.
+
+    Rename and delete must operate on an in-root symlink, not on its target.
+    """
+    if not isinstance(path, str) or not path.strip() or "\x00" in path:
+        raise HTTPException(status_code=400, detail="路径非法")
+    try:
+        absolute = os.path.normpath(os.path.abspath(path))
+    except (OSError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="路径非法")
+    if absolute in _real_roots():
+        return Path(absolute)
+    name = _safe_name(os.path.basename(absolute))
+    parent = os.path.realpath(os.path.dirname(absolute))
+    if _path_is_allowed(parent):
+        return Path(parent) / name
+    raise HTTPException(status_code=403, detail="目录不在允许浏览的范围内")
+
+
+def _is_root(path: Path) -> bool:
+    return os.path.normpath(os.path.abspath(path)) in _real_roots()
 
 
 def _is_dir(p: Path) -> bool:
@@ -186,20 +267,13 @@ async def get_codex_usage(_=Depends(require_auth)):
         raise HTTPException(status_code=503, detail="Codex 用量暂时不可用")
 
 
-def _safe_name(name: str) -> str:
-    name = (name or "").strip()
-    if not name or "/" in name or name in (".", ".."):
-        raise HTTPException(status_code=400, detail="名称非法")
-    return name
-
-
 @app.post("/api/fs/mkdir")
 async def fs_mkdir(request: Request, _=Depends(require_auth)):
     body = await request.json()
     parent = safe_resolve(body.get("parent", ""))
     name = _safe_name(body.get("name", ""))
     target = parent / name
-    if target.exists():
+    if target.exists() or target.is_symlink():
         raise HTTPException(status_code=400, detail="已存在同名项")
     try:
         target.mkdir(parents=False)
@@ -212,13 +286,12 @@ async def fs_mkdir(request: Request, _=Depends(require_auth)):
 async def fs_rename(request: Request, _=Depends(require_auth)):
     body = await request.json()
     raw = body.get("path", "")
-    safe_resolve(raw)  # whitelist check
-    p = Path(raw)
-    if str(p) in config.ROOTS:
+    p = safe_resolve_entry(raw)
+    if _is_root(p):
         raise HTTPException(status_code=400, detail="不能重命名根目录")
     name = _safe_name(body.get("name", ""))
     target = p.parent / name
-    if target.exists():
+    if target.exists() or target.is_symlink():
         raise HTTPException(status_code=400, detail="已存在同名项")
     try:
         p.rename(target)
@@ -231,9 +304,8 @@ async def fs_rename(request: Request, _=Depends(require_auth)):
 async def fs_delete(request: Request, _=Depends(require_auth)):
     body = await request.json()
     raw = body.get("path", "")
-    safe_resolve(raw)  # whitelist check
-    p = Path(raw)
-    if str(p) in config.ROOTS:
+    p = safe_resolve_entry(raw)
+    if _is_root(p):
         raise HTTPException(status_code=400, detail="不能删除根目录")
     try:
         if p.is_symlink():
@@ -255,10 +327,12 @@ async def fs_touch(request: Request, _=Depends(require_auth)):
     parent = safe_resolve(body.get("parent", ""))
     name = _safe_name(body.get("name", ""))
     target = parent / name
-    if target.exists():
+    if target.exists() or target.is_symlink():
         raise HTTPException(status_code=400, detail="已存在同名项")
     try:
-        target.touch()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(target, flags, 0o600)
+        os.close(fd)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return {"ok": True, "path": str(target)}
@@ -272,7 +346,9 @@ async def fs_upload(parent: str = Form(...), file: UploadFile = File(...), _=Dep
     name = _safe_name(os.path.basename(file.filename or ""))
     target = p / name
     try:
-        with open(target, "wb") as out:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(target, flags, 0o600)
+        with os.fdopen(fd, "wb") as out:
             shutil.copyfileobj(file.file, out)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -518,7 +594,8 @@ def start_session(sid: str, _=Depends(require_auth)):
     if not tab:
         raise HTTPException(status_code=404, detail="没有这个标签")
     if not tmux_mgr.session_exists(tmux_mgr.session_name(sid)):
-        if not Path(tab["cwd"]).is_dir():
+        p = safe_resolve(tab["cwd"])
+        if not p.is_dir():
             raise HTTPException(status_code=400, detail="原目录已不存在，无法重启")
         ttype = tab.get("type", "claude")
         if ttype == "claude":
@@ -530,7 +607,7 @@ def start_session(sid: str, _=Depends(require_auth)):
         else:
             cmd, mode = "", "new"  # plain shell
         try:
-            tmux_mgr.start_session(sid, tab["cwd"], cmd, {"type": ttype, "mode": mode})
+            tmux_mgr.start_session(sid, str(p), cmd, {"type": ttype, "mode": mode})
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
         store.update_tab(sid, mode=mode)

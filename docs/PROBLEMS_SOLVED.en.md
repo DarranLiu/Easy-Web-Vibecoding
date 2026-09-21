@@ -21,6 +21,6 @@ This is not a release log. It records concrete failures encountered while using 
 | IME input sometimes lost characters | Composition events remain separate from ordinary key events. |
 | Copy failed on a plain-HTTP LAN origin | HTTPS uses the Clipboard API; a controlled fallback remains for ordinary HTTP. |
 | A TCP tunnel made every source IP look local | Trusted proxy information can restore the source; otherwise client ID and device data provide a fallback count. |
-| Tokens appeared in WebSocket or download URLs | Authentication uses an HttpOnly cookie, keeping the token out of URLs, browser history, and default proxy logs. |
+| Tokens appeared in WebSocket or download URLs | Login now issues a signed, time-limited HttpOnly session proof; the master token stays out of browser storage, URLs, history, and default proxy logs. |
 
 The shared principle is that a terminal is a work tool: stable, recoverable, and quiet, without requiring users to memorize browser-specific rituals.

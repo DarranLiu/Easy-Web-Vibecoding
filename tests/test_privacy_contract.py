@@ -15,6 +15,14 @@ from backend import gpu, main
 from backend.private_files import write_private_json
 
 
+class JsonRequest:
+    def __init__(self, body):
+        self.body = body
+
+    async def json(self):
+        return self.body
+
+
 class PrivacyContractTests(unittest.TestCase):
     def test_private_json_ignores_permissive_umask(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,6 +67,72 @@ class PrivacyContractTests(unittest.TestCase):
             image = Path(result["path"])
             self.assertEqual(stat.S_IMODE(image.parent.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(image.stat().st_mode), 0o600)
+
+    def test_path_allowlist_uses_real_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "root"
+            inside = root / "project"
+            outside = base / "outside"
+            inside.mkdir(parents=True)
+            outside.mkdir()
+            (root / "outside-link").symlink_to(outside, target_is_directory=True)
+
+            with patch.object(main.config, "ROOTS", [str(root)]):
+                self.assertEqual(main.safe_resolve(str(inside)), inside)
+                with self.assertRaises(HTTPException) as escaped:
+                    main.safe_resolve(str(outside))
+                self.assertEqual(escaped.exception.status_code, 403)
+                with self.assertRaises(HTTPException) as linked:
+                    main.safe_resolve(str(root / "outside-link"))
+                self.assertEqual(linked.exception.status_code, 403)
+
+    def test_delete_removes_outside_pointing_symlink_not_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "root"
+            root.mkdir()
+            outside = base / "outside.txt"
+            outside.write_text("keep", encoding="utf-8")
+            link = root / "outside-link"
+            link.symlink_to(outside)
+
+            with patch.object(main.config, "ROOTS", [str(root)]):
+                asyncio.run(main.fs_delete(JsonRequest({"path": str(link)}), _=True))
+
+            self.assertFalse(link.exists())
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
+    def test_upload_does_not_follow_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "root"
+            root.mkdir()
+            outside = base / "outside.txt"
+            outside.write_text("keep", encoding="utf-8")
+            (root / "upload.txt").symlink_to(outside)
+            upload = UploadFile(io.BytesIO(b"replace"), filename="upload.txt")
+
+            with patch.object(main.config, "ROOTS", [str(root)]):
+                with self.assertRaises(HTTPException):
+                    asyncio.run(main.fs_upload(parent=str(root), file=upload, _=True))
+
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep")
+
+    def test_created_files_are_private_and_reject_dangling_links(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(main.config, "ROOTS", [tmp]):
+            previous = os.umask(0o022)
+            try:
+                result = asyncio.run(main.fs_touch(JsonRequest({"parent": tmp, "name": "note.txt"}), _=True))
+            finally:
+                os.umask(previous)
+            self.assertEqual(stat.S_IMODE(Path(result["path"]).stat().st_mode), 0o600)
+
+            dangling = Path(tmp) / "dangling.txt"
+            dangling.symlink_to(Path(tmp).parent / "missing.txt")
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(main.fs_touch(JsonRequest({"parent": tmp, "name": dangling.name}), _=True))
+            self.assertEqual(raised.exception.status_code, 400)
 
     def test_api_responses_are_not_cacheable(self):
         request = Request({

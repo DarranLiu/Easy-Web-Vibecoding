@@ -4,6 +4,15 @@ This project follows [Semantic Versioning](https://semver.org/) for tagged relea
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-21
+
+### Security
+
+- Replaced the raw-token authentication cookie with a server-signed, time-limited session proof.
+- Normalized file allowlist checks with real paths and common-path containment.
+- Prevented file creation and uploads from following final symbolic links.
+- Made rename and delete act on an in-root symbolic link itself instead of its target.
+
 ## [0.1.0] - 2026-09-21
 
 ### Added
@@ -17,5 +26,6 @@ This project follows [Semantic Versioning](https://semver.org/) for tagged relea
 - Responsive desktop/mobile UI, bundled terminal fonts, themes, and PWA metadata.
 - Token authentication with privacy-hardened cookies, state files, previews, and logging defaults.
 
-[Unreleased]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DarranLiu/Easy-Web-Vibecoding/releases/tag/v0.1.0

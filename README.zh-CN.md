@@ -191,7 +191,7 @@ FastAPI 后端 ── attach ── tmux session ── Claude / Codex / OpenCod
 - IP 与设备类型会保存在本机的私有状态文件中；可以在“IP 记录”里删除。
 - 默认关闭 Uvicorn access log，避免文件 API 的绝对路径进入服务日志；外部代理启用日志时也应去掉查询参数。
 
-登录状态使用 HttpOnly、SameSite Cookie；Token 不进入下载链接、WebSocket URL、浏览器历史或代理访问日志。API 和文件预览响应禁止缓存，运行时状态文件统一使用 `0600`。详见 [安全策略](SECURITY.zh-CN.md)。
+登录成功后，原始 Token 会换成服务端签名、带有效期的 HttpOnly、SameSite 会话 Cookie，浏览器不保存原始 Token。Token 不进入下载链接、WebSocket URL、浏览器历史或代理访问日志。API 和文件预览响应禁止缓存，运行时状态文件统一使用 `0600`。详见 [安全策略](SECURITY.zh-CN.md)。
 
 ## 测试
 

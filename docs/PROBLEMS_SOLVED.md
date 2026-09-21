@@ -19,6 +19,6 @@
 | 中文输入法偶尔丢字 | 单独处理 IME composition 生命周期，不把正在合成的中文误当成普通按键。 |
 | 复制在 HTTP 局域网页面不可用 | HTTPS 下用 Clipboard API，普通 HTTP 下保留受控的兼容复制路径。 |
 | 原始 TCP 隧道后面看到的来源 IP 全是本机 | 支持通过反向代理恢复来源 IP；无法恢复时按客户端 ID 和设备信息计数。 |
-| Token 出现在 WebSocket 或下载 URL 中 | 开源版统一使用 HttpOnly Cookie，URL、浏览器历史和代理访问日志不再携带 Token。 |
+| Token 出现在 WebSocket 或下载 URL 中 | 登录后改用服务端签名、带有效期的 HttpOnly 会话凭据；原始 Token 不进入浏览器存储、URL、历史和默认访问日志。 |
 
 这些处理有一个共同原则：终端是工作工具，应该稳定、可恢复、少打扰，不能要求用户记住一堆特殊操作。
