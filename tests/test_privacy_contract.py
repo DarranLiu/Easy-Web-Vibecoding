@@ -86,6 +86,10 @@ class PrivacyContractTests(unittest.TestCase):
         self.assertIn('[ -t 1 ]', script)
         self.assertIn('mktemp "${token_file}.XXXXXX"', script)
         self.assertIn('chmod 600 "$token_tmp"', script)
+        self.assertIn("--no-access-log", script)
+
+        service = Path("deploy/easy-web-vibecoding.service.example").read_text(encoding="utf-8")
+        self.assertIn("--no-access-log", service)
 
 
 if __name__ == "__main__":

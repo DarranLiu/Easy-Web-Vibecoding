@@ -46,4 +46,4 @@ fi
 echo "   (set CC_WEB_AUTH=0 to disable auth on localhost)"
 echo "================================================================"
 
-exec python3 -m uvicorn backend.main:app --host "$CC_WEB_HOST" --port "$CC_WEB_PORT"
+exec python3 -m uvicorn backend.main:app --host "$CC_WEB_HOST" --port "$CC_WEB_PORT" --no-access-log

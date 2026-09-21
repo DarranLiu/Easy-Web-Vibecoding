@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/absolute/path/to/Easy-Web-Vibecoding
 EnvironmentFile=%h/.config/easy-web-vibecoding/env
-ExecStart=/absolute/path/to/Easy-Web-Vibecoding/.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+ExecStart=/absolute/path/to/Easy-Web-Vibecoding/.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --no-access-log
 Restart=on-failure
 RestartSec=3
 

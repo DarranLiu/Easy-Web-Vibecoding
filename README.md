@@ -185,6 +185,7 @@ FastAPI 后端 ── attach ── tmux session ── Claude / Codex / OpenCod
 - 当前没有多租户隔离、角色权限和只读访客模式。
 - 通过认证的人会共享终端、文件、资源和连接信息，只应把 Token 交给受信任的操作者。
 - IP 与设备类型会保存在本机的私有状态文件中；可以在“IP 记录”里删除。
+- 默认关闭 Uvicorn access log，避免文件 API 的绝对路径进入服务日志；外部代理启用日志时也应去掉查询参数。
 
 登录状态使用 HttpOnly、SameSite Cookie；Token 不进入下载链接、WebSocket URL、浏览器历史或代理访问日志。API 和文件预览响应禁止缓存，运行时状态文件统一使用 `0600`。详见 [安全策略](SECURITY.md)。
 
