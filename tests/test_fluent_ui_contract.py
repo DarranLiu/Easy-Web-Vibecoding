@@ -13,7 +13,7 @@ MANIFEST = json.loads((ROOT / "frontend" / "manifest.webmanifest").read_text())
 class FluentUiContractTests(unittest.TestCase):
     def test_versioned_assets_and_fluent_identity_are_present(self):
         self.assertIn('/style.css?v=1', INDEX_HTML)
-        self.assertIn('/app.js?v=1', INDEX_HTML)
+        self.assertIn('/app.js?v=0.1.2', INDEX_HTML)
         self.assertIn('class="app-brand"', INDEX_HTML)
         self.assertNotIn('class="traffic"', INDEX_HTML)
         self.assertIn('"Segoe UI Variable Text"', STYLE_CSS)

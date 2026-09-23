@@ -1,6 +1,7 @@
 "use strict";
 
 const mqMobile = window.matchMedia("(max-width: 820px)");
+const mqDark = window.matchMedia("(prefers-color-scheme: dark)");
 const state = { tabs: [], activeId: null };
 let startupRestoreTried = false;
 const TERMINAL_FONT_FAMILY = '"CC Terminal Mono", "CC Terminal Symbols", "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "Segoe UI Symbol", "Segoe UI Emoji", "Microsoft YaHei UI", monospace';
@@ -1533,6 +1534,9 @@ function attachTerminal(tab, pane) {
     scrollback: 10000,
     customGlyphs: true,
     rescaleOverlappingGlyphs: true,
+    // TUIs can retain explicit backgrounds after a theme change. Keep their
+    // text readable without rewriting ANSI output or changing those backgrounds.
+    minimumContrastRatio: 4.5,
     // Without this, xterm's shouldForceSelection() on mac/iPadOS is
     // `altKey && macOptionClickForcesSelection` — i.e. always false — so a
     // mouse-reporting app (claude/codex) leaves NO way to select text at all.
@@ -1947,7 +1951,8 @@ document.getElementById("presence-btn").onclick = () => {
 
 // ---- theme -----------------------------------------------------------------
 function currentTheme() {
-  return localStorage.getItem("cc_theme") || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const saved = localStorage.getItem("cc_theme");
+  return saved === "light" || saved === "dark" ? saved : (mqDark.matches ? "dark" : "light");
 }
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
@@ -1955,14 +1960,20 @@ function applyTheme(t) {
   if (tc) tc.setAttribute("content", t === "dark" ? "#202020" : "#f5f5f5");
   const btn = document.getElementById("theme-toggle");
   if (btn) btn.textContent = t === "dark" ? "◐ 浅色" : "◐ 深色";
+  panes.forEach((p) => {
+    if (p.term) p.term.options.theme = TERM_THEME[t];
+  });
 }
 function toggleTheme() {
   const t = currentTheme() === "dark" ? "light" : "dark";
   localStorage.setItem("cc_theme", t);
   applyTheme(t);
-  panes.forEach((p) => { if (p.term) { try { p.term.options.theme = TERM_THEME[t]; } catch (e) {} } });
 }
 document.getElementById("theme-toggle").onclick = toggleTheme;
+mqDark.addEventListener("change", () => applyTheme(currentTheme()));
+window.addEventListener("storage", (event) => {
+  if (event.storageArea === localStorage && (event.key === "cc_theme" || event.key === null)) applyTheme(currentTheme());
+});
 applyTheme(currentTheme());
 
 // ---- misc wiring -----------------------------------------------------------

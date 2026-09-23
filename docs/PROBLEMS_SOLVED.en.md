@@ -9,6 +9,7 @@ This is not a release log. It records concrete failures encountered while using 
 | Closing the browser also lost the AI task | The task runs in tmux. Browser disconnects and backend restarts do not kill it. |
 | The interface felt like a generic page rather than working software | The workspace uses compact, consistent type, spacing, focus, command bars, and light/dark states. |
 | Some Windows computers showed boxes or corrupt glyphs | Terminal fonts are shipped with the app and backed by cross-platform fallbacks. |
+| Codex input became almost invisible on a pale background in dark mode | xterm adjusts low-contrast text while retaining the program's explicit backgrounds. Theme changes update all open panes. See [v0.1.2](releases/v0.1.2.md). |
 | The wheel only moved the AI app, leaving normal shell history unreachable | Full-screen TUIs receive wheel input; a normal shell drives tmux copy-mode history. |
 | One page could show only one terminal | Up to four panes support horizontal, vertical, and automatic layouts, draggable dividers, swapping, and independent reconnects. |
 | The OpenCode action launched a different program | Frontend type, backend command, and executable detection are separate and covered by a contract test. |
