@@ -794,7 +794,7 @@ async def ws_term(websocket: WebSocket, sid: str):
 
     sender = asyncio.create_task(pump_out())
 
-    scrolled = False  # tracks whether we've entered tmux copy-mode via wheel
+    scrolled = False  # a successful scroll may have entered tmux copy-mode
     try:
         while True:
             msg = await websocket.receive_text()

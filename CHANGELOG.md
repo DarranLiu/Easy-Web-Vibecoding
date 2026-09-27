@@ -4,6 +4,21 @@ This project follows [Semantic Versioning](https://semver.org/) for tagged relea
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-27
+
+### Fixed
+
+- Fixed fullscreen Codex history getting stuck at a yellow tmux position such as `[2/2]`. The backend now checks the foreground program and inner screen, leaves stale copy-mode, and uses Codex's native PageUp/PageDown navigation. Inline terminals keep tmux scrollback.
+- Kept wheel scrolling available while text selection mode blocks pointer clicks and drags.
+- Accumulated small trackpad movements instead of forcing every event to scroll a whole line; reset fractional movement between gestures, directions and connections.
+- Kept Ctrl+wheel zoom gestures out of terminal input and verified independent scrolling in split panes.
+
+### Tests
+
+- Added browser scroll regression coverage and offline full-screen/inline fixtures running in an isolated real tmux server. CI now runs the tmux integration tests too.
+
+This release changes the backend as well as the frontend. See the [English / Chinese upgrade notes](docs/releases/v0.1.3.md).
+
 ## [0.1.2] - 2026-09-23
 
 ### Fixed
@@ -41,7 +56,8 @@ See the [English / Chinese release notes](docs/releases/v0.1.2.md) for the repor
 - Responsive desktop/mobile UI, bundled terminal fonts, themes, and PWA metadata.
 - Token authentication with privacy-hardened cookies, state files, previews, and logging defaults.
 
-[Unreleased]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/DarranLiu/Easy-Web-Vibecoding/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DarranLiu/Easy-Web-Vibecoding/releases/tag/v0.1.0

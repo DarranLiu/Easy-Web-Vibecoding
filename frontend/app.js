@@ -1342,11 +1342,11 @@ function rowPx(term) {
 }
 function wheelToLines(ev, term) {
   const raw = ev && ev.deltaY ? ev.deltaY : 0;
-  if (!raw) return 0;
+  if (!Number.isFinite(raw) || !raw) return 0;
   // xterm divides pixel deltas by the real row height; this used to divide by a
   // hardcoded 18, so at a large font one row of finger travel scrolled ~2 rows.
   const unit = ev.deltaMode === 1 ? 1 : ev.deltaMode === 2 ? (term ? term.rows : 24) : 1 / rowPx(term);
-  const lines = Math.max(1, Math.min(120, Math.round(Math.abs(raw) * unit)));
+  const lines = Math.min(120, Math.abs(raw) * unit);
   return raw > 0 ? lines : -lines;
 }
 // Our own SGR wheel report coming back in the OUTPUT stream can only mean one
@@ -1373,8 +1373,8 @@ function noteMouseEcho(pane, bytes) {
 function appWantsMouse(term, pane) {
   // Because we run over `tmux attach`, tmux itself holds the outer terminal on
   // the alternate screen, so xterm's buffer type is ALWAYS "alternate" and can't
-  // tell claude from codex. The reliable signal is whether the inner app enabled
-  // mouse reporting (tmux passes it through): claude does, codex/plain-shell don't.
+  // tell which program owns history. Forward enabled mouse reporting; the
+  // backend checks the inner screen for programs without mouse reporting.
   let m = "none";
   try { m = (term.modes && term.modes.mouseTrackingMode) || "none"; } catch (e) { return false; }
   if (m === "none") {
@@ -1391,32 +1391,51 @@ function attachTerminalWheelHandler(term, host, pane) {
   // Two kinds of sessions need opposite handling:
   //  • mouse-reporting apps (claude): forward the wheel so the app scrolls its
   //    own view — tmux has no scrollback for them (they own the inner screen).
-  //  • non-mouse apps (codex, plain shell): they render to tmux's normal buffer
-  //    with real scrollback, so drive tmux copy-mode. We must also swallow the
-  //    event so xterm's alternate-scroll-mode doesn't turn the wheel into arrow
-  //    keys (which is why codex's wheel only moved the input box).
+  //  • non-mouse apps: ask the backend to choose tmux history or fullscreen
+  //    Codex's native transcript. Swallow the event so xterm's alternate-scroll
+  //    handling cannot turn it into input-history arrow keys.
+  let remainder = 0, lastWheelAt = 0, lastSocket = null;
   const handler = (ev) => {
     if (appWantsMouse(term, pane || active)) {
+      remainder = 0;
+      lastSocket = null;
       const p = pane || active;
       if (p) p.echoProbeUntil = Date.now() + 600;   // watch the next output for our own bytes
       return true;                                  // native: forward wheel to the app
     }
-    const lines = wheelToLines(ev, term);
-    if (lines) {
-      const ws = (pane || active) && (pane || active).ws;
-      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "scroll", lines }));
+    const delta = wheelToLines(ev, term);
+    const ws = (pane || active) && (pane || active).ws;
+    if (!ws || ws.readyState !== 1) {
+      remainder = 0;
+      lastSocket = null;
+    } else if (delta) {
+      const now = Date.now();
+      // Keep sub-row trackpad movement within this pane and gesture only.
+      if (ws !== lastSocket || now - lastWheelAt > 250 || delta * remainder < 0) remainder = 0;
+      lastSocket = ws;
+      lastWheelAt = now;
+      remainder += delta;
+      const lines = Math.trunc(remainder);
+      remainder -= lines;
+      if (lines) ws.send(JSON.stringify({ type: "scroll", lines }));
     }
     if (ev && ev.preventDefault) ev.preventDefault();
     if (ev && ev.stopPropagation) ev.stopPropagation();
     return false;
   };
-  if (typeof term.attachCustomWheelEventHandler === "function") {
+  const hasCustomHandler = typeof term.attachCustomWheelEventHandler === "function";
+  if (hasCustomHandler) {
     term.attachCustomWheelEventHandler(handler);
-    return () => {};
   }
   const domHandler = (ev) => {
-    if (appWantsMouse(term, pane || active)) return; // let xterm's own listener forward it
-    handler(ev);
+    // Chromium represents trackpad pinch as Ctrl+wheel. Leave browser zoom
+    // intact before xterm can cancel it or send it to the terminal program.
+    if (ev.ctrlKey) {
+      remainder = 0;
+      ev.stopPropagation();
+      return;
+    }
+    if (!hasCustomHandler) handler(ev);
   };
   host.addEventListener("wheel", domHandler, { passive: false, capture: true });
   return () => host.removeEventListener("wheel", domHandler, { capture: true });
@@ -2081,6 +2100,19 @@ function toggleKeyboard() {
 // true while 选择模式 is on". That reuses xterm's designed path, which also
 // stopPropagation()s the event so the app never sees the drag.
 let selectMode = localStorage.getItem("cc_select_mode") === "1";
+function isMouseWheelReport(data) {
+  let button;
+  if (data.startsWith("\x1b[M") && data.length === 6) {
+    button = data.charCodeAt(3) - 32;
+  } else {
+    const match = /^\x1b\[(<)?(\d+);\d+;\d+[Mm]$/.exec(data);
+    if (!match) return false;
+    button = Number(match[2]) - (match[1] ? 0 : 32);
+  }
+  // Remove Shift/Alt/Ctrl bits, retaining wheel vs pointer-motion bits.
+  button &= ~28;
+  return button >= 64 && button <= 67;
+}
 function installSelectMode(term) {
   let ok = false;
   try {
@@ -2098,19 +2130,19 @@ function installSelectMode(term) {
     //     coreService.onUserInput(() => hasSelection && clearSelection())
     // So the selection died the moment you let go and moved toward the button —
     // the highlight vanished and the copy button then honestly said "没有选中".
-    // Kill mouse reporting wholesale while 选择模式 is on: every reporting
-    // listener gates on this one flag.
+    // Suppress pointer reports while selecting, but keep wheel reports: TUIs
+    // such as Claude own their history and need these to scroll it.
     // The reporting listeners are (re)registered on protocol change and don't
     // re-check the flag above on every event, so a few reports still slipped
     // through and killed the selection. Close it at the exit instead: drop
-    // mouse-report sequences outright while 选择模式 is on. Keyboard input is
-    // untouched — only the three mouse encodings match.
+    // non-wheel mouse-report sequences while 选择模式 is on. Keyboard input
+    // and scrolling remain available in all three mouse encodings.
     const cs = core && core.coreService;
     if (cs && !cs.__ccPatched) {
       const origTrigger = cs.triggerDataEvent.bind(cs);
       const MOUSE_SEQ = /^\x1b\[(?:M[\s\S]{3}|<?\d+;\d+;\d+[Mm])$/;
       cs.triggerDataEvent = (data, wasUserInput) => {
-        if (selectMode && typeof data === "string" && MOUSE_SEQ.test(data)) return;
+        if (selectMode && typeof data === "string" && MOUSE_SEQ.test(data) && !isMouseWheelReport(data)) return;
         return origTrigger(data, wasUserInput);
       };
       cs.__ccPatched = true;
@@ -2135,7 +2167,7 @@ function updateSelectBtn() {
   const b = document.getElementById("btn-select");
   if (!b) return;
   b.classList.toggle("on", selectMode);
-  b.title = selectMode ? "选择模式:开(拖拽=选中文字,鼠标不再传给程序)" : "选择模式:关(拖拽交给程序,如 claude 的点击)";
+  b.title = selectMode ? "选择模式:开(拖拽选中文字,滚轮仍可滚动)" : "选择模式:关(拖拽交给程序,如 claude 的点击)";
   b.setAttribute("aria-pressed", String(selectMode));
   document.querySelectorAll(".pane").forEach((el) => el.classList.toggle("selecting", selectMode));
 }
@@ -2143,7 +2175,7 @@ function toggleSelectMode() {
   selectMode = !selectMode;
   localStorage.setItem("cc_select_mode", selectMode ? "1" : "0");
   updateSelectBtn();
-  showToast(selectMode ? "选择模式已开:直接拖拽即可选中文字" : "选择模式已关:鼠标恢复交给程序");
+  showToast(selectMode ? "选择模式已开:拖拽选字,滚轮仍可滚动" : "选择模式已关:鼠标恢复交给程序");
   if (active && active.term) { try { active.term.focus(); } catch (e) {} }
 }
 

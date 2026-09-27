@@ -21,7 +21,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -r backend/requirements.txt
+      - run: sudo apt-get update && sudo apt-get install -y tmux build-essential
       - run: python -m unittest discover -s tests -v
+        env:
+          CC_WEB_TMUX_TESTS: "1"
       - run: bash -n run.sh
       - uses: actions/setup-node@v7
         with:

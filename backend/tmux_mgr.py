@@ -89,11 +89,11 @@ def exit_copy_mode(name: str) -> bool:
 
 
 def scroll_session(name: str, lines: int) -> bool:
-    """Scroll tmux pane history for an attached browser terminal.
+    """Scroll the history owned by the pane's current foreground program.
 
     Negative lines scroll up into history, positive lines scroll back down.
-    This keeps mouse wheel events from being interpreted by full-screen TUIs
-    such as Codex as application-local history navigation.
+    Inline programs use tmux history. Fullscreen Codex owns its transcript and
+    needs PageUp/PageDown instead; tmux copy-mode only sees a screen snapshot.
     """
     try:
         n = int(lines)
@@ -102,6 +102,29 @@ def scroll_session(name: str, lines: int) -> bool:
     if n == 0:
         return False
     count = min(200, max(1, abs(n)))
+    state = _tmux([
+        "display-message", "-p", "-t", name,
+        "#{alternate_on}\t#{pane_mode}\t#{pane_current_command}\t#{pane_height}",
+    ])
+    if state.returncode != 0:
+        return False
+    fields = state.stdout.strip("\r\n").split("\t")
+    if len(fields) != 4:
+        return False
+    alternate, mode, command, height = fields
+    if alternate == "1" and command == "codex":
+        if mode and mode != "copy-mode":
+            return False
+        if mode == "copy-mode" and not exit_copy_mode(name):
+            return False
+        try:
+            page_rows = max(1, int(height) - 2)
+        except ValueError:
+            return False
+        pages = min(5, max(1, (count + page_rows - 1) // page_rows))
+        key = "PPage" if n < 0 else "NPage"
+        return _tmux(["send-keys", "-t", name, "-N", str(pages), key]).returncode == 0
+
     direction = "scroll-up" if n < 0 else "scroll-down"
     if _tmux(["copy-mode", "-e", "-t", name]).returncode != 0:
         return False

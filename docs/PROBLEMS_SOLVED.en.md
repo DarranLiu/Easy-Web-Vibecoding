@@ -11,6 +11,8 @@ This is not a release log. It records concrete failures encountered while using 
 | Some Windows computers showed boxes or corrupt glyphs | Terminal fonts are shipped with the app and backed by cross-platform fallbacks. |
 | Codex input became almost invisible on a pale background in dark mode | xterm adjusts low-contrast text while retaining the program's explicit backgrounds. Theme changes update all open panes. See [v0.1.2](releases/v0.1.2.md). |
 | The wheel only moved the AI app, leaving normal shell history unreachable | Full-screen TUIs receive wheel input; a normal shell drives tmux copy-mode history. |
+| Codex stopped scrolling at a yellow `[2/2]` even though earlier messages existed | Fullscreen Codex without mouse reporting now uses its own PageUp/PageDown navigation instead of tmux's screen snapshot. Inline Codex still uses tmux history. See [v0.1.3](releases/v0.1.3.md). |
+| Selecting text disabled scrolling, and tiny trackpad movements jumped too far | Selection mode now permits wheel reports while blocking pointer reports; fractional trackpad movement accumulates per pane. |
 | One page could show only one terminal | Up to four panes support horizontal, vertical, and automatic layouts, draggable dividers, swapping, and independent reconnects. |
 | The OpenCode action launched a different program | Frontend type, backend command, and executable detection are separate and covered by a contract test. |
 | Codex models visible in a normal terminal were missing in the web launch | The web-launched process can reuse the local model catalog, with environment controls to disable or override it. |
