@@ -119,7 +119,7 @@ button { font-family: inherit; color: inherit; }
 /* collapsed sidebar (desktop) */
 body.sb-collapsed #body { grid-template-columns: 0 1fr; }
 body.sb-collapsed #sidebar { border-right-width: 0; }
-/* titlebar sidebar toggle */
+/* titlebar sidebar toggle — sits just right of the traffic lights, macOS style */
 .tb-btn {
   z-index: 1; margin-left: 14px; width: 26px; height: 22px; border-radius: 6px;
   border: none; background: none; cursor: pointer; color: var(--text-2);
@@ -130,7 +130,7 @@ body.sb-collapsed #sidebar { border-right-width: 0; }
 .tb-btn:active { background: var(--hover-2); }
 #scrim { display: none; }
 
-/* compact overlay scrollbars */
+/* scrollbars — macOS overlay style */
 * { scrollbar-width: thin; scrollbar-color: var(--separator) transparent; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--separator); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
@@ -325,11 +325,9 @@ body.gutter-dragging .pane { pointer-events: none; }
 /* wide: side-by-side */
 .panes[data-eff="row"][data-n="2"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
 .panes[data-eff="row"][data-n="3"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-.panes[data-eff="row"][data-n="3"] > .pane:first-child { grid-row: span 2; }
 .panes[data-eff="row"][data-n="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 /* narrow (or forced): stack top-to-bottom */
 .panes[data-eff="col"] { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-rows: 1fr; }
-.panes[data-eff="col"] > .pane:first-child { grid-row: auto; }
 .pane {
   display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
   background: var(--term-bg); border-radius: 8px; border: 1px solid transparent;
@@ -427,7 +425,6 @@ body.gutter-dragging .pane { pointer-events: none; }
 /* hard floor: never squeeze two columns onto a phone, whatever the setting */
 @media (max-width: 560px) {
   .panes[data-n="2"], .panes[data-n="3"], .panes[data-n="4"] { grid-template-columns: 1fr; grid-template-rows: none; grid-auto-rows: 1fr; }
-  .panes > .pane:first-child { grid-row: auto; }
 }
 
 /* image → terminal modal */
@@ -467,7 +464,7 @@ body.aux-hidden #auxbar { display: none !important; }
 .keycap:active { background: var(--hover-2); }
 .keycap.armed { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-/* ---- modal --------------------------------------------------------------- */
+/* ---- modal (macOS sheet) ------------------------------------------------ */
 .modal { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,.28); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
 .modal-box { width: 540px; max-width: 100%; max-height: 84vh; background: var(--content-bg); border: 0.5px solid var(--separator); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--separator-2); }
@@ -523,7 +520,7 @@ body.aux-hidden #auxbar { display: none !important; }
   box-shadow: var(--shadow); word-break: break-word;
 }
 
-/* app alert / prompt dialog (replaces native prompt/confirm) */
+/* macOS-style alert / prompt dialog (replaces native prompt/confirm) */
 .ui-dialog-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-start; justify-content: center; padding: 16vh 20px 20px; background: rgba(0,0,0,.30); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
 .ui-dialog { width: 290px; max-width: 92vw; background: var(--content-bg); border: 0.5px solid var(--separator); border-radius: 14px; box-shadow: var(--shadow); padding: 20px 20px 16px; text-align: center; }
 .ui-dialog-icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 12px; background: linear-gradient(160deg, var(--accent), color-mix(in srgb, var(--accent) 65%, #000)); display: grid; place-items: center; color: #fff; font-size: 22px; box-shadow: 0 6px 16px -6px var(--accent); }
@@ -538,7 +535,7 @@ body.aux-hidden #auxbar { display: none !important; }
 .ui-btn.primary:hover { filter: brightness(1.06); }
 .ui-btn.primary.danger { background: var(--red); }
 
-/* login window (token entry) */
+/* macOS login window (token entry) */
 .login {
   position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
   width: 100vw; height: 100vh; height: 100dvh; min-height: 100dvh; overflow: hidden;

@@ -37,6 +37,18 @@ DEFAULT_DIR = os.environ.get("CC_WEB_DEFAULT_DIR", str(Path.home()))
 
 # --- Agent binaries + terminal-type availability ----------------------------
 CODEX_BIN = os.environ.get("CC_WEB_CODEX") or shutil.which("codex") or "codex"
+CODEX_SCROLLBACK = os.environ.get("CC_WEB_CODEX_SCROLLBACK", "1") != "0"
+# A web terminal must not attach to an unrelated, older shared Codex daemon.
+CODEX_NO_DAEMON = True
+TERMINAL_LAUNCHER_DIR = Path(os.environ.get(
+    "CC_WEB_TERMINAL_LAUNCHER_DIR", str(Path.home() / ".cache" / "cc-web-terminal" / "bin")
+)).expanduser()
+AGENT_RUNTIME_DIR = Path(os.environ.get(
+    "CC_WEB_AGENT_RUNTIME_DIR", str(Path.home() / ".cache" / "cc-web-terminal" / "sessions")
+)).expanduser()
+AGENT_UPDATE_DIR = Path(os.environ.get(
+    "CC_WEB_AGENT_UPDATE_DIR", str(Path.home() / ".cache" / "cc-web-terminal" / "updates")
+)).expanduser()
 _CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
 _DEFAULT_CODEX_MODEL_CATALOG = _CODEX_HOME / "catalogs" / "models-current.json"
 _CODEX_MODEL_CATALOG_OVERRIDE = os.environ.get("CC_WEB_CODEX_MODEL_CATALOG")

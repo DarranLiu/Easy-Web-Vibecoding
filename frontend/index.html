@@ -14,40 +14,54 @@
       var saved = localStorage.getItem("cc_theme");
       var t = saved === "light" || saved === "dark" ? saved : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
       document.documentElement.setAttribute("data-theme", t);
+      var ui = new URLSearchParams(location.search).get("ui") || localStorage.getItem("cc_ui") || "bridge";
+      document.documentElement.setAttribute("data-ui", ui === "legacy" ? "legacy" : "bridge");
+      document.documentElement.setAttribute("data-terminal-style", localStorage.getItem("cc_terminal_style") === "glass" ? "glass" : "graphite");
+      document.querySelector('meta[name="theme-color"]').setAttribute("content", t === "dark" ? "#111417" : "#e8edf0");
     })();
   </script>
   <link rel="preload" href="/vendor/fonts/DejaVuSansMono.ttf?v=1" as="font" type="font/ttf" crossorigin />
+  <link rel="preload" href="/vendor/fonts/InterVariable-latin.woff2?v=1" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/vendor/fonts/JetBrainsMonoVariable-latin.woff2?v=1" as="font" type="font/woff2" crossorigin />
   <link rel="icon" href="/app-icon.svg?v=1" type="image/svg+xml" />
   <link rel="manifest" href="/manifest.webmanifest?v=1" />
   <link rel="stylesheet" href="/vendor/xterm.min.css" />
-  <link rel="stylesheet" href="/style.css?v=1" />
+  <link rel="stylesheet" href="/style.css?v=95" />
+  <link rel="stylesheet" href="/glass.css?v=88" />
+  <link rel="stylesheet" href="/workspace.css?v=91" />
+  <link rel="stylesheet" href="/appearance.css?v=94" />
 </head>
 <body>
   <div id="app">
-    <div id="titlebar" role="banner">
-      <button id="btn-sidebar" class="tb-btn" title="隐藏侧边栏" aria-label="隐藏侧边栏">☰</button>
-      <div class="app-brand" aria-label="CC Terminal">
-        <span class="app-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-        <span class="app-brand-name">CC Terminal</span>
-      </div>
-      <div class="titlebar-divider" aria-hidden="true"></div>
-      <div class="titlebar-title" id="titlebar-title">CC Terminal</div>
-      <div class="titlebar-actions">
-        <button id="btn-gpu" class="tb-btn" title="资源监控（显卡 / 存储）" aria-label="资源监控">▦</button>
-        <button id="btn-files" class="tb-btn" title="文件浏览与预览" aria-label="文件">▤</button>
-        <button id="tl-green" class="tb-btn" title="全屏" aria-label="全屏">⛶</button>
-      </div>
-    </div>
     <div id="body">
     <div id="scrim"></div>
 
     <aside id="sidebar">
+      <div id="titlebar" role="banner">
+        <div class="window-controls">
+          <button id="window-close" class="window-dot red" title="关闭当前视图（任务继续运行）" aria-label="关闭当前视图"></button>
+          <button id="window-minimise" class="window-dot yellow" title="收起侧栏" aria-label="收起侧栏"></button>
+          <button id="tl-green" class="window-dot green" title="全屏" aria-label="全屏"></button>
+        </div>
+        <div class="app-brand" aria-label="CC Terminal"><span class="app-brand-name">cc Terminal</span></div>
+      </div>
+      <nav class="workspace-nav" aria-label="工作区">
+        <div class="nav-section-title">GLOBAL</div>
+        <button id="nav-global" class="nav-link" aria-pressed="false"><span data-icon="Globe"></span><span>Global</span></button>
+        <button id="nav-current" class="nav-link selected" aria-pressed="true"><span data-icon="Clock3"></span><span>Current</span></button>
+        <div class="nav-section-title system-title">SYSTEM</div>
+        <button id="nav-files" class="nav-link"><span data-icon="Folder"></span><span>文件</span></button>
+        <button id="nav-resources" class="nav-link"><span data-icon="PanelsTopLeft"></span><span>资源监控</span></button>
+        <button id="nav-access" class="nav-link"><span data-icon="Users"></span><span>访问记录</span></button>
+        <button id="nav-storage" class="nav-link"><span data-icon="Database"></span><span>存储</span></button>
+      </nav>
       <div class="side-head">
         <div class="sidebar-toolbar">
           <button id="new-term" class="toolbar-btn primary" title="新终端"><span class="toolbar-ic">＋</span><span>新终端</span></button>
           <button id="new-group" class="toolbar-btn" title="新建分组" aria-label="新建分组"><span class="toolbar-ic">▣</span></button>
         </div>
       </div>
+      <label class="session-search"><input id="session-search" type="search" placeholder="搜索终端" autocomplete="off" /></label>
       <div id="chat-list" class="chat-list"></div>
       <div class="side-presence">
         <button id="presence-btn" class="presence-btn" aria-expanded="false" aria-controls="presence-panel">
@@ -69,13 +83,43 @@
     </aside>
 
     <main id="main">
+      <header id="workspace-header">
+        <div class="workspace-crumb">
+          <button id="header-new" class="tb-btn" title="新终端" aria-label="新终端">+</button>
+          <button id="btn-sidebar" class="tb-btn" title="隐藏侧边栏" aria-label="隐藏侧边栏" aria-controls="sidebar" aria-expanded="true">☰</button>
+          <span class="workspace-root">Projects</span><span class="crumb-chevron" data-icon="ChevronRight"></span>
+          <span id="workspace-project" class="project-chip">工作区</span><span class="crumb-chevron" data-icon="ChevronRight"></span>
+          <span class="workspace-current"><span data-icon="Folder"></span><span id="titlebar-title">CC Terminal</span></span>
+        </div>
+        <div class="workspace-actions">
+          <button id="btn-versions" class="tb-btn" title="版本与更新" aria-label="版本与更新"><span data-icon="PackageSearch"></span></button>
+          <button id="btn-tools" class="tb-btn" title="收起功能栏" aria-label="收起功能栏" aria-expanded="true" aria-controls="term-header"><span data-icon="Settings"></span></button>
+          <button id="btn-search" class="tb-btn" title="搜索终端" aria-label="搜索终端"><span data-icon="Search"></span></button>
+          <span class="header-divider" aria-hidden="true"></span>
+          <button id="header-split" class="tb-btn" title="新增分屏" aria-label="新增分屏"><span data-icon="Grid2X2"></span></button>
+          <button id="btn-files" class="tb-btn header-overflow" title="文件浏览与预览" aria-label="文件">▤</button>
+          <button id="btn-gpu" class="tb-btn header-overflow" title="资源监控" aria-label="资源监控">▦</button>
+        </div>
+      </header>
       <div id="topbar">
         <button class="icon-btn" id="hamburger" aria-label="菜单" aria-controls="sidebar" aria-expanded="false">☰</button>
-        <span class="topbar-title" id="topbar-title">CC Terminal</span>
+        <button id="recent-toggle" class="recent-trigger" title="最近会话" aria-label="最近会话" aria-haspopup="menu" aria-controls="recent-sessions" aria-expanded="false">
+          <span class="topbar-title" id="topbar-title">CC Terminal</span><span data-icon="ChevronDown" aria-hidden="true"></span>
+        </button>
         <span class="topbar-presence" id="topbar-presence"></span>
         <span class="topbar-status" id="topbar-status" role="status" aria-live="polite"></span>
         <button id="btn-files-m" class="icon-btn" title="文件浏览与预览" aria-label="文件">▤</button>
         <button id="btn-gpu-m" class="icon-btn" title="资源监控(显卡 / 存储)" aria-label="资源监控">▦</button>
+        <button id="btn-versions-m" class="icon-btn" title="版本与更新" aria-label="版本与更新"><span data-icon="PackageSearch"></span></button>
+        <button id="topbar-tools" class="icon-btn" title="收起功能栏" aria-label="收起功能栏" aria-expanded="true" aria-controls="term-header"><span data-icon="Settings"></span></button>
+      </div>
+      <div id="recent-sessions" class="recent-sessions hidden" role="menu" aria-labelledby="recent-sessions-title">
+        <div class="recent-head" role="presentation"><span id="recent-sessions-title">最近会话</span><button id="recent-close" class="icon-btn" role="menuitem" title="关闭会话列表" aria-label="关闭会话列表"><span data-icon="X"></span></button></div>
+        <div id="recent-list" class="recent-list" role="presentation"></div>
+      </div>
+      <div id="quick-commands" class="quick-commands hidden" role="menu" aria-labelledby="quick-commands-title">
+        <div class="recent-head" role="presentation"><span id="quick-commands-title">快捷命令</span><button id="quick-commands-close" class="icon-btn" role="menuitem" title="关闭快捷命令" aria-label="关闭快捷命令"><span data-icon="X"></span></button></div>
+        <div id="quick-command-list" class="quick-command-list" role="presentation"></div>
       </div>
 
       <section id="empty" class="empty">
@@ -88,7 +132,7 @@
       </section>
 
       <section id="term-view" class="hidden">
-        <header id="term-header">
+        <header id="term-header" role="toolbar" aria-label="终端工具">
           <span class="status-dot green" id="term-dot"></span>
           <span id="term-title">—</span>
           <span id="term-path"></span>
@@ -112,12 +156,33 @@
           <button id="btn-aux" class="hdr-btn" title="辅助键" aria-label="辅助键">⌥</button>
           <button id="btn-fs" class="hdr-btn" title="全屏" aria-label="全屏">⛶</button>
           <span class="command-divider" aria-hidden="true"></span>
+          <button id="btn-restart" class="hdr-btn" title="重启并恢复原会话" aria-label="重启并恢复原会话" disabled></button>
+          <button id="btn-interrupt" class="hdr-btn" title="中断当前程序（发送 Ctrl+C）" aria-label="中断当前程序" disabled>中断</button>
           <button id="btn-stop" class="hdr-btn danger">停止</button>
         </header>
         <div id="panes" class="panes" data-n="1"></div>
-        <div id="auxbar" class="auxbar"></div>
       </section>
+      <footer id="workspace-footer">
+        <div class="footer-encoding"><span>UTF-8</span><span>LF</span></div>
+        <div id="auxbar" class="auxbar"></div>
+        <div class="footer-status"><span id="footer-state">READY</span><span id="footer-session">—</span></div>
+      </footer>
     </main>
+    </div>
+  </div>
+
+  <div id="versions-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="versions-title">
+    <div class="modal-box versions-box">
+      <div class="modal-head">
+        <h3 id="versions-title">版本与更新</h3>
+        <button id="versions-close" class="icon-btn" title="关闭" aria-label="关闭"><span data-icon="X"></span></button>
+      </div>
+      <div class="versions-target" id="versions-target"></div>
+      <div id="versions-list" class="versions-list" aria-busy="false"></div>
+      <div class="modal-foot versions-foot">
+        <span id="versions-status" role="status" aria-live="polite"></span>
+        <button id="versions-check" class="btn-sm"><span data-icon="RefreshCw"></span><span>检测最新版本</span></button>
+      </div>
     </div>
   </div>
 
@@ -248,7 +313,7 @@
 
     <div id="fv" class="fv hidden">
       <div class="fv-bar">
-        <button id="fv-close" class="btn-sm" title="返回" aria-label="返回文件列表">‹ 返回</button>
+        <button id="fv-close" class="icon-btn" title="返回">‹ 返回</button>
         <span class="fv-name" id="fv-name"></span>
         <span class="fv-meta" id="fv-meta"></span>
         <button id="fv-prev" class="btn-sm" title="上一个">‹</button>
@@ -277,6 +342,11 @@
 
   <script src="/vendor/xterm.min.js"></script>
   <script src="/vendor/addon-fit.min.js"></script>
-  <script src="/app.js?v=0.1.3"></script>
+  <script src="/vendor/lucide.min.js?v=1.49.0"></script>
+  <script src="/app.js?v=97"></script>
+  <script src="/updates.js?v=88"></script>
+  <script src="/appearance.js?v=94"></script>
+  <script src="/native-input.js?v=96"></script>
+  <script src="/workspace.js?v=92"></script>
 </body>
 </html>

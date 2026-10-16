@@ -13,7 +13,10 @@ class OpenCodeContractTests(unittest.TestCase):
     def test_backend_exposes_and_launches_opencode(self):
         self.assertTrue(hasattr(main.config, "OPENCODE_BIN"))
         self.assertTrue(hasattr(main.config, "OPENCODE_OK"))
-        self.assertEqual(main._launch_cmd("opencode", "new"), main.config.OPENCODE_BIN)
+        self.assertTrue(main.config.OPENCODE_OK)
+        command = main._launch_cmd("opencode", "new")
+        self.assertIn('alias opencode=_cc_web_opencode', command)
+        self.assertTrue(command.endswith('_cc_web_opencode --port 0 --hostname 127.0.0.1'))
         with self.assertRaises(ValueError):
             main._launch_cmd("unknown-agent", "new")
 

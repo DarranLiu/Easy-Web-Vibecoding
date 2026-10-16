@@ -148,13 +148,13 @@ test('system theme changes update the page and terminal until manually overridde
   await paint(page);
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await expect.poll(() => page.evaluate(() => active.term.options.theme.background)).toBe('#FFFFFF');
+  await expect.poll(() => page.evaluate(() => active.term.options.theme.foreground === TERM_THEME.light.foreground)).toBe(true);
   await readable(page);
   await page.locator('#theme-toggle').click();
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect.poll(() => page.evaluate(() => active.term.options.theme.background)).toBe('#1E1E1E');
+  await expect.poll(() => page.evaluate(() => active.term.options.theme.foreground === TERM_THEME.dark.foreground)).toBe(true);
   expect(await page.evaluate(() => window.fixtureInput)).toEqual([]);
 });
 
@@ -164,10 +164,10 @@ test('theme preference changes and clearing storage synchronize existing tabs', 
   await fixture(other);
   await page.locator('#theme-toggle').click();
   await expect(other.locator('html')).toHaveAttribute('data-theme', 'light');
-  await expect.poll(() => other.evaluate(() => active.term.options.theme.background)).toBe('#FFFFFF');
+  await expect.poll(() => other.evaluate(() => active.term.options.theme.foreground === TERM_THEME.light.foreground)).toBe(true);
   await page.evaluate(() => localStorage.clear());
   await expect(other.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect.poll(() => other.evaluate(() => active.term.options.theme.background)).toBe('#1E1E1E');
+  await expect.poll(() => other.evaluate(() => active.term.options.theme.foreground === TERM_THEME.dark.foreground)).toBe(true);
   expect(await other.evaluate(() => window.fixtureInput)).toEqual([]);
 });
 

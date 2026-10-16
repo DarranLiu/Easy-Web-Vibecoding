@@ -25,15 +25,19 @@ jobs:
       - run: python -m unittest discover -s tests -v
         env:
           CC_WEB_TMUX_TESTS: "1"
+      - run: python scripts/check_release.py
       - run: bash -n run.sh
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - run: node --check frontend/app.js
+      - run: |
+          for file in frontend/*.js backend/*.mjs; do
+            node --check "$file"
+          done
 
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

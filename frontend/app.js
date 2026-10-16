@@ -3,11 +3,17 @@
 const mqMobile = window.matchMedia("(max-width: 820px)");
 const mqDark = window.matchMedia("(prefers-color-scheme: dark)");
 const state = { tabs: [], activeId: null };
+const restartRequests = new Map();
+let interruptPending = false;
+const RECENT_SESSION_LIMIT = 10;
+let recentSessionIds = readRecentSessionIds();
+let recentSwitchBusy = false;
 let startupRestoreTried = false;
-const TERMINAL_FONT_FAMILY = '"CC Terminal Mono", "CC Terminal Symbols", "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "Segoe UI Symbol", "Segoe UI Emoji", "Microsoft YaHei UI", monospace';
+const TERMINAL_FONT_FAMILY = '"CC JetBrains Mono", "CC Terminal Mono", "CC Terminal Symbols", "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, "Segoe UI Symbol", "Segoe UI Emoji", "Microsoft YaHei UI", monospace';
 
 // ---- auth / api ------------------------------------------------------------
 let tokenPromptOpen = false;
+function getToken() { return localStorage.getItem("cc_token") || ""; }
 function setTokenPrompt() {
   if (tokenPromptOpen) return;  // one login only; ignore stale 401s
   tokenPromptOpen = true;
@@ -53,6 +59,7 @@ function showLogin() {
         body: JSON.stringify({ token: v }),
       });
       if (!r.ok) throw new Error("Token 不正确，请重试");
+      localStorage.removeItem("cc_token");
       sessionStorage.removeItem("cc_login_tried");
       hideLogin();
       await loadConfig();
@@ -77,6 +84,8 @@ async function api(path, opts = {}, _retries) {
   if (_retries === undefined) _retries = method === "GET" ? 3 : 0;  // retry idempotent GETs
   const headers = Object.assign({}, opts.headers || {});
   if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  const legacyToken = getToken();
+  if (legacyToken && !headers.Authorization) headers.Authorization = "Bearer " + legacyToken;
   let r;
   try {
     r = await fetch(path, Object.assign({}, opts, { headers, credentials: "same-origin" }));
@@ -99,6 +108,57 @@ function wsUrl(p) {
   return proto + "//" + location.host + p;
 }
 function esc(s) { return (s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+const uiIconCache = new Map();
+function uiIcon(name) {
+  if (uiIconCache.has(name)) return uiIconCache.get(name);
+  const library = window.lucide;
+  if (!library || !library.icons[name]) return "";
+  const svg = library.createElement(library.icons[name], {
+    class: "ui-icon", width: 16, height: 16, "stroke-width": 1.65,
+    "aria-hidden": "true", focusable: "false",
+  }).outerHTML;
+  uiIconCache.set(name, svg);
+  return svg;
+}
+function setCommandIcon(button, name, label) {
+  if (typeof button === "string") button = document.getElementById(button);
+  if (!button) return;
+  const svg = uiIcon(name);
+  if (!svg) return;
+  if (label || !button.hasAttribute("aria-label")) button.setAttribute("aria-label", label || button.title || button.textContent.trim());
+  button.innerHTML = svg + (label ? '<span>' + esc(label) + '</span>' : "");
+}
+const GLYPH_ICONS = {
+  "✎": "Pencil", "⤴": "FolderInput", "■": "Square", "▷": "Play", "⌫": "Trash2",
+  "⬇": "Download", "⇄": "ArrowLeftRight", "✕": "X", "↑": "ArrowUp", "↓": "ArrowDown",
+  "←": "ArrowLeft", "→": "ArrowRight", "↵": "CornerDownLeft",
+};
+function initialiseCommandIcons() {
+  document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = uiIcon(el.dataset.icon); });
+  const commands = {
+    "btn-sidebar": "PanelLeft", hamburger: "PanelLeft", "btn-files": "FolderOpen",
+    "btn-files-m": "FolderOpen", "btn-gpu": "Activity", "btn-gpu-m": "Activity",
+    "tl-green": "Maximize", "btn-fs": "Maximize", "new-group": "FolderPlus",
+    "btn-select": "TextSelect", "btn-copy": "Copy", "btn-img": "ImagePlus",
+    "btn-split": "PanelsTopLeft", "btn-dir": "Columns2", "btn-kbd": "Keyboard",
+    "btn-aux": "Command", "btn-interrupt": "CirclePause", "btn-stop": "Square", "btn-restart": "RotateCw", "size-dn": "Minus", "size-up": "Plus",
+    "dir-close": "X", "img-close": "X", "gpu-close": "X", "ips-close": "X",
+    "files-close": "X", "files-reload": "RefreshCw", "fv-close": "ArrowLeft",
+    "fv-prev": "ChevronLeft", "fv-next": "ChevronRight", "login-go": "ArrowRight",
+  };
+  Object.entries(commands).forEach(([id, name]) => setCommandIcon(id, name));
+  [
+    ["new-term", "Plus", "新终端"], ["empty-new", "Plus", "新终端"],
+    ["set-token", "KeyRound", "Token"], ["refresh", "RefreshCw", "刷新"],
+    ["dir-mkdir", "FolderPlus", "新建文件夹"], ["dir-touch", "FilePlus2", "新建文件"],
+    ["dir-upload", "Upload", "上传文件"], ["gpu-reload", "RefreshCw", "刷新"],
+    ["files-up", "ArrowUp", "上级"], ["files-home", "House", "常用目录"],
+    ["tab-gpu", "Cpu", "显卡"], ["tab-disk", "HardDrive", "存储"],
+    ["ips-open", "Users", "IP 记录 / 熟人名单"], ["fv-dl", "Download", "下载"],
+  ].forEach(([id, name, label]) => setCommandIcon(id, name, label));
+}
+initialiseCommandIcons();
+
 function keyboardClickable(el, action, label) {
   el.tabIndex = 0;
   el.setAttribute("role", "button");
@@ -173,7 +233,7 @@ function setButtonBusy(button, busy) {
 // Fluent-style tooltips for icon-only commands. Native titles are promoted on
 // first use so the tooltip can be positioned inside the viewport.
 const tooltip = document.getElementById("tooltip");
-const TOOLTIP_TARGETS = ".tb-btn,.hdr-btn,.icon-btn,.mini,.icon-btn-sm,.group-rename,.group-del,.pane-x,.pane-swap,.toolbar-btn[aria-label]";
+const TOOLTIP_TARGETS = ".tb-btn,.hdr-btn,.icon-btn,.ws-icon,.mini,.icon-btn-sm,.group-rename,.group-del,.pane-x,.pane-swap,.pane-restart,.toolbar-btn[aria-label]";
 let tooltipTimer = null;
 let tooltipOwner = null;
 let keyboardNavigation = false;
@@ -316,6 +376,7 @@ function uiConfirm(title, message, destructive) { return uiDialog({ title, messa
 // ---- drawer ----------------------------------------------------------------
 const body = document.body;
 function setDrawer(open) {
+  if (open) { closeRecentSessions(false); closeQuickCommands(false); }
   body.classList.toggle("drawer-open", open);
   document.getElementById("hamburger").setAttribute("aria-expanded", String(open));
 }
@@ -331,16 +392,27 @@ async function loadTabs() {
   try { data = await api("/api/sessions"); } catch (e) { return; }
   if (seq !== tabsLoadSeq) return;
   state.tabs = data.sessions || [];
+  state.sessionsLoaded = true;
+  recentSessionIds = recentSessionIds.filter(id => state.tabs.some(tab => tab.id === id));
+  persistRecentSessions();
   state.groups = data.groups || {};
   state.manualGroups = data.manualGroups || [];
+  for (const pane of panes) {
+    const tab = pane.tab && state.tabs.find(t => t.id === pane.tab.id);
+    if (tab) pane.tab = tab;
+  }
   renderTabs();
+  updateRestartControls();
   maybeRestoreActiveTab();
+  window.ccWorkspace?.sessionsChanged();
+  window.ccNativeInput?.sync();
 }
 function mini(label, cls, onclick, title) {
   const b = document.createElement("button");
   b.className = "mini" + (cls ? " " + cls : "");
   b.textContent = label;
   if (title) { b.title = title; b.setAttribute("aria-label", title); }
+  if (GLYPH_ICONS[label]) setCommandIcon(b, GLYPH_ICONS[label]);
   b.onclick = (e) => { e.stopPropagation(); onclick(); };
   return b;
 }
@@ -349,7 +421,106 @@ function getCollapsed() { try { return JSON.parse(localStorage.getItem("cc_colla
 function toggleCollapsed(cwd) { const c = getCollapsed(); c[cwd] = !c[cwd]; localStorage.setItem("cc_collapsed", JSON.stringify(c)); }
 function tabName(t) { return t.name || ("cc_" + t.id); }
 function typeLabel(ty) { return ty === "opencode" ? "OpenCode" : ty === "codex" ? "Codex" : ty === "shell" ? "终端" : "Claude"; }
-function saveActiveId(id) { if (id) localStorage.setItem("cc_active_id", id); }
+function saveActiveId(id) {
+  if (!id) return;
+  localStorage.setItem("cc_active_id", id);
+  recentSessionIds = [id, ...recentSessionIds.filter(previous => previous !== id)].slice(0, RECENT_SESSION_LIMIT);
+  persistRecentSessions();
+}
+
+function readRecentSessionIds() {
+  try {
+    const value = JSON.parse(localStorage.getItem("cc_recent_sessions") || "[]");
+    return Array.isArray(value) ? [...new Set(value.filter(id => typeof id === "string" && id.length <= 128))].slice(0, RECENT_SESSION_LIMIT) : [];
+  } catch (_) { return []; }
+}
+function persistRecentSessions() {
+  try { localStorage.setItem("cc_recent_sessions", JSON.stringify(recentSessionIds)); } catch (_) {}
+}
+function recentTabs() {
+  const tabs = state.tabs || [];
+  const ids = [...new Set([state.activeId, ...recentSessionIds, ...tabs.filter(tab => tab.alive).map(tab => tab.id), ...tabs.map(tab => tab.id)])];
+  return ids.map(id => tabs.find(tab => tab.id === id)).filter(Boolean).slice(0, RECENT_SESSION_LIMIT);
+}
+function renderRecentSessions() {
+  const list = document.getElementById("recent-list");
+  const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.sessionId : null;
+  list.replaceChildren();
+  list.setAttribute("aria-busy", String(recentSwitchBusy));
+  const tabs = recentTabs();
+  if (!tabs.length) {
+    const empty = document.createElement("div");
+    empty.className = "recent-empty";
+    empty.textContent = "暂无会话";
+    list.appendChild(empty);
+  }
+  for (const tab of tabs) {
+    const button = document.createElement("button");
+    const selected = tab.id === state.activeId;
+    button.className = "recent-row" + (selected ? " selected" : "");
+    button.dataset.sessionId = tab.id;
+    button.setAttribute("role", "menuitemradio");
+    button.setAttribute("aria-checked", String(selected));
+    button.setAttribute("aria-label", tabName(tab) + "，" + typeLabel(tab.type) + "，" + (tab.alive ? "运行中" : "已停止，点击重启"));
+    button.disabled = recentSwitchBusy;
+    button.innerHTML = '<span class="status-dot ' + (tab.alive ? "green" : "grey") + '"></span><span class="recent-meta"><span class="recent-name"></span><span class="recent-detail"></span></span><span class="recent-check" aria-hidden="true"></span>';
+    button.querySelector(".recent-name").textContent = tabName(tab);
+    button.querySelector(".recent-detail").textContent = typeLabel(tab.type) + " · " + tabBasename(tab.cwd) + (tab.alive ? "" : " · 已停止");
+    button.querySelector(".recent-check").innerHTML = selected ? uiIcon("Check") : "";
+    button.onclick = async () => {
+      if (recentSwitchBusy) return;
+      recentSwitchBusy = true;
+      renderRecentSessions();
+      try { if (await openTab(tab)) closeRecentSessions(false); }
+      finally { recentSwitchBusy = false; renderRecentSessions(); }
+    };
+    list.appendChild(button);
+  }
+  if (focusedId && !recentSwitchBusy && layerOpen(document.getElementById("recent-sessions"))) {
+    const row = Array.from(list.children).find(button => button.dataset.sessionId === focusedId);
+    (row || list.querySelector("button") || document.getElementById("recent-close")).focus({ preventScroll: true });
+  }
+}
+function closeRecentSessions(restoreFocus = true) {
+  const menu = document.getElementById("recent-sessions");
+  const wasOpen = layerOpen(menu);
+  menu.classList.add("hidden");
+  document.getElementById("recent-toggle").setAttribute("aria-expanded", "false");
+  if (wasOpen && restoreFocus) document.getElementById("recent-toggle").focus({ preventScroll: true });
+}
+document.getElementById("recent-toggle").onclick = () => {
+  const menu = document.getElementById("recent-sessions");
+  if (layerOpen(menu)) { closeRecentSessions(); return; }
+  closeQuickCommands(false);
+  closeDrawer();
+  renderRecentSessions();
+  menu.classList.remove("hidden");
+  document.getElementById("recent-toggle").setAttribute("aria-expanded", "true");
+  (menu.querySelector('[aria-checked="true"]') || menu.querySelector(".recent-row") || document.getElementById("recent-close")).focus({ preventScroll: true });
+};
+document.getElementById("recent-close").onclick = () => closeRecentSessions();
+document.addEventListener("pointerdown", event => {
+  const menu = document.getElementById("recent-sessions");
+  if (recentSwitchBusy && event.target.closest(".ui-dialog-backdrop")) return;
+  if (layerOpen(menu) && !menu.contains(event.target) && !document.getElementById("recent-toggle").contains(event.target)) closeRecentSessions(false);
+}, true);
+document.addEventListener("keydown", event => {
+  const menu = document.getElementById("recent-sessions");
+  if (!layerOpen(menu)) return;
+  if (recentSwitchBusy && document.querySelector(".ui-dialog-backdrop:not(.hidden)")) return;
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeRecentSessions(); return; }
+  if (event.key === "Tab") { closeRecentSessions(); return; }
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const buttons = Array.from(menu.querySelectorAll(".recent-row:not(:disabled)"));
+  if (!buttons.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const current = buttons.indexOf(document.activeElement);
+  const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
+    (current + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+  buttons[index].focus();
+}, true);
+mqMobile.addEventListener("change", () => closeRecentSessions(false));
 function maybeRestoreActiveTab() {
   if (startupRestoreTried || panes.length || tokenPromptOpen) return;
   const alive = (state.tabs || []).filter((t) => t.alive);
@@ -385,7 +556,17 @@ function chatItem(t) {
   const actions = item.querySelector(".chat-actions");
   actions.appendChild(mini("✎", "", () => renameTab(t), "改名"));
   actions.appendChild(mini("⤴", "", () => moveTab(t), "移动到分组"));
-  if (t.alive) actions.appendChild(mini("■", "danger", () => requestStopTab(t), "停止"));
+  if (["codex", "claude", "opencode"].includes(t.resumeAgent || t.type)) {
+    const restart = mini("", "", () => requestRestartTab(t), "重启并恢复原会话");
+    setCommandIcon(restart, "RotateCw");
+    restart.disabled = restartRequests.has(t.id);
+    actions.appendChild(restart);
+  }
+  if (t.alive) {
+    const stop = mini("■", "danger", () => requestStopTab(t), "停止");
+    stop.disabled = restartRequests.has(t.id);
+    actions.appendChild(stop);
+  }
   else { actions.appendChild(mini("▷", "", () => openTab(t), "重启")); actions.appendChild(mini("⌫", "danger", () => deleteTab(t.id), "删除")); }
   item.onclick = () => openTab(t);
   keyboardClickable(item, () => openTab(t), "打开终端 " + tabName(t));
@@ -398,6 +579,8 @@ function groupBox(key, headHTML, items, headWire, emptyHint) {
   const g = document.createElement("div"); g.className = "chat-group";
   const head = document.createElement("div"); head.className = "group-head" + (isCol ? " collapsed" : "") + (key[0] === "m" ? " manual" : "");
   head.innerHTML = headHTML;
+  head.querySelectorAll(".group-rename").forEach(b => setCommandIcon(b, "Pencil"));
+  head.querySelectorAll(".group-del").forEach(b => setCommandIcon(b, "Trash2"));
   head.querySelector(".group-count").textContent = items.length;
   head.setAttribute("aria-expanded", String(!isCol));
   headWire(head);
@@ -412,9 +595,11 @@ function groupBox(key, headHTML, items, headWire, emptyHint) {
 }
 
 function renderTabs() {
+  renderRecentSessions();
   const list = document.getElementById("chat-list");
   list.innerHTML = "";
-  const tabs = state.tabs || [], manual = state.manualGroups || [];
+  const query = document.getElementById("session-search").value.trim().toLowerCase();
+  const tabs = (state.tabs || []).filter(t => !query || [t.name, t.id, t.cwd, typeLabel(t.type)].some(value => String(value || "").toLowerCase().includes(query))), manual = state.manualGroups || [];
   if (!tabs.length && !manual.length) {
     list.innerHTML = '<div class="chat-empty">还没有终端<br>点上面「＋ 新终端」开始</div>';
     return;
@@ -542,6 +727,7 @@ async function stopTab(id) {
   await loadTabs();
 }
 async function requestStopTab(tab) {
+  if (restartRequests.has(tab.id)) { showToast("此终端正在执行重启操作"); return; }
   const name = tab.name || tab.title || ("cc_" + tab.id);
   if (!(await uiConfirm("停止「" + name + "」", "这会终止服务器上的 tmux 会话。关闭当前视图不会停止它。", true))) return;
   await stopTab(tab.id);
@@ -613,7 +799,7 @@ function upRow(target) {
 function entryRow(e) {
   const row = document.createElement("div");
   row.className = "dir-row" + (e.type === "file" ? " file" : "");
-  row.innerHTML = '<span class="ic">' + (e.type === "dir" ? "▸" : "·") + '</span><span class="nm"></span><span class="row-actions"></span>';
+  row.innerHTML = '<span class="ic">' + (uiIcon(e.type === "dir" ? "Folder" : "File") || (e.type === "dir" ? "▸" : "·")) + '</span><span class="nm"></span><span class="row-actions"></span>';
   row.querySelector(".nm").textContent = e.name;
   if (e.type === "dir") {
     row.onclick = () => loadDir(e.path);
@@ -628,6 +814,7 @@ function entryRow(e) {
 function iconBtn(label, title, onclick) {
   const b = document.createElement("button");
   b.className = "icon-btn-sm"; b.textContent = label; b.title = title; b.setAttribute("aria-label", title);
+  if (GLYPH_ICONS[label]) setCommandIcon(b, GLYPH_ICONS[label]);
   b.onclick = (ev) => { ev.stopPropagation(); onclick(); };
   return b;
 }
@@ -723,7 +910,9 @@ async function uploadFiles(files) {
 }
 async function downloadEntry(e) {
   try {
-    const r = await fetch("/api/fs/download?path=" + encodeURIComponent(e.path), { credentials: "same-origin" });
+    const headers = {};
+    if (getToken()) headers.Authorization = "Bearer " + getToken();
+    const r = await fetch("/api/fs/download?path=" + encodeURIComponent(e.path), { credentials: "same-origin", headers });
     if (r.status === 401) { setTokenPrompt(); throw new Error("需要有效 Token"); }
     if (!r.ok) throw new Error(r.statusText || "下载失败");
     const blob = await r.blob();
@@ -764,6 +953,7 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
       saveActiveId(tab.id);
       attachTerminal(tab);
       await loadTabs();
+      await window.ccWorkspace?.terminalCreated(tab);
       closeDrawer();
     } catch (e) { showToast("创建失败 · " + e.message); }
     finally {
@@ -776,25 +966,129 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
 });
 
 // ---- open / restart a tab --------------------------------------------------
-async function openTab(tab) {
-  const ep = paneOfTab(tab.id);
-  if (ep && tab.alive) { focusPane(ep); closeDrawer(); return; }
-  let t = tab;
-  if (!t.alive) {
-    try { t = await api("/api/sessions/" + t.id + "/start", { method: "POST" }); }
-    catch (e) { showToast("重启失败 · " + e.message); return; }
+function updateRestartControls() {
+  const supported = tab => tab && ["codex", "claude", "opencode"].includes(tab.resumeAgent || tab.type);
+  for (const pane of panes) {
+    const button = pane.el.querySelector(".pane-restart");
+    if (!button) continue;
+    const busy = !!(pane.tab && restartRequests.has(pane.tab.id));
+    button.classList.toggle("hidden", !supported(pane.tab));
+    button.disabled = !supported(pane.tab) || busy;
+    button.setAttribute("aria-busy", String(busy));
+    pane.el.classList.toggle("restarting", pane.tab && restartRequests.get(pane.tab.id) === "restarting");
   }
-  state.activeId = t.id;
-  saveActiveId(t.id);
-  attachTerminal(t);
-  await loadTabs();
-  closeDrawer();
+  const tab = active && active.tab;
+  const button = document.getElementById("btn-restart");
+  if (button) {
+    button.disabled = !supported(tab) || restartRequests.has(tab.id);
+    button.setAttribute("aria-busy", String(!!(tab && restartRequests.has(tab.id))));
+  }
+  document.getElementById("btn-stop").disabled = !tab || restartRequests.has(tab.id);
+  updateInterruptControl();
+  updateQuickCommandState();
+}
+function updateInterruptControl() {
+  const button = document.getElementById("btn-interrupt"), p = active;
+  if (button) button.disabled = interruptPending || !p?.term || !p.tab || p.dead || p.ws?.readyState !== 1 || restartRequests.has(p.tab.id);
+}
+async function requestInterruptActive() {
+  const p = active, term = p?.term, ws = p?.ws, gen = p?.gen, id = p?.tab?.id;
+  if (interruptPending || !term || !id || p.dead || ws?.readyState !== 1 || restartRequests.has(id)) return;
+  interruptPending = true; updateInterruptControl();
+  try {
+    if (!(await uiDialog({ title: "中断「" + tabName(p.tab) + "」", message: "向当前程序发送一次 Ctrl+C，可能取消正在执行的任务或退出 Codex / Claude Code。不会终止 tmux 会话。",
+      okLabel: "发送中断", destructive: true, icon: "!" }))) return;
+    if (active !== p || !panes.includes(p) || p.term !== term || p.ws !== ws || p.gen !== gen || p.tab?.id !== id || p.dead || ws.readyState !== 1 || restartRequests.has(id)) {
+      showToast("窗口或连接已变化，中断已取消"); return;
+    }
+    ctrlArmed = false; updateCtrlCap();
+    // This explicit, confirmed command is the only UI interrupt path.
+    sendInputTo(p, "\x03");
+  } finally { interruptPending = false; updateInterruptControl(); }
+}
+function restartRequestId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+}
+async function requestRestartTab(tab) {
+  if (!tab || !["codex", "claude", "opencode"].includes(tab.resumeAgent || tab.type) || restartRequests.has(tab.id)) return;
+  const id = tab.id, name = tabName(tab), pane = paneOfTab(id), generation = pane && pane.gen;
+  const targetUnchanged = () => !pane || (panes.includes(pane) && pane.gen === generation && pane.tab?.id === id);
+  restartRequests.set(id, "checking");
+  updateRestartControls();
+  renderTabs();
+  try {
+    let preview = await api("/api/sessions/" + id + "/restart", {}, 0);
+    if (!targetUnchanged()) { showToast("窗口已切换，重启已取消"); return; }
+    if (preview.canBind && !preview.ready) {
+      const identifier = await uiPrompt("绑定「" + name + "」的原会话" + (preview.agent === "opencode" ? "编号" : " UUID"), "", "i");
+      if (identifier === null || !identifier.trim() || !targetUnchanged()) return;
+      preview = await api("/api/sessions/" + id + "/restart/bind", {
+        method: "POST", body: JSON.stringify({ sessionId: identifier.trim() }),
+      });
+    }
+    if (!preview.ready) { showToast(preview.reason || "此会话暂时不能自动恢复"); return; }
+    const message = (preview.running ? "这会退出当前程序，可能中断正在执行的任务，并丢弃未发送的输入。" : "") +
+      "将恢复原会话 " + preview.sessionId + "，恢复后等待输入，不自动发送“继续”。";
+    if (!(await uiDialog({ title: "重启并恢复「" + name + "」", message, okLabel: "重启并恢复", icon: "?" }))) return;
+    if (!targetUnchanged()) { showToast("窗口已切换，重启已取消"); return; }
+    restartRequests.set(id, "restarting");
+    closeQuickCommands(false);
+    updateRestartControls();
+    if (pane && targetUnchanged()) setStatus("reconnecting", "重启中", pane);
+    const restored = await api("/api/sessions/" + id + "/restart", {
+      method: "POST", body: JSON.stringify({ expected: preview.expected, requestId: restartRequestId(), confirmed: true }),
+    });
+    const index = state.tabs.findIndex(item => item.id === id);
+    if (index !== -1) state.tabs[index] = restored;
+    if (pane && targetUnchanged()) { pane.tab = restored; paneHeader(pane); }
+    showToast("已恢复「" + name + "」的原会话");
+  } catch (error) {
+    showToast("重启未完成 · " + error.message);
+  } finally {
+    restartRequests.delete(id);
+    if (pane && targetUnchanged() && pane.ws?.readyState === 1) setStatus("connected", "运行中", pane);
+    updateRestartControls();
+    renderTabs();
+  }
+}
+let openingTab = false;
+async function openTab(tab) {
+  if (openingTab) return false;
+  openingTab = true;
+  try {
+    if (window.ccWorkspace && !(await window.ccWorkspace.beforeOpen(tab))) return false;
+    const mobile = mqMobile.matches;
+    const targetPane = active, targetGeneration = active?.gen;
+    const ep = paneOfTab(tab.id);
+    if (ep && tab.alive) { focusPane(ep, !COARSE); closeDrawer(); return true; }
+    let t = tab;
+    if (!t.alive) {
+      const name = tab.name || tab.title || tabName(tab);
+      if (!(await uiConfirm("启动「" + name + "」？", tab.type === "shell" ? "将在原目录启动终端。" : "将检查原会话绑定后启动并恢复；无法确认原会话时不会新建替代对话。"))) return false;
+      if (mobile !== mqMobile.matches || (window.ccWorkspace && !(await window.ccWorkspace.beforeOpen(tab)))) return false;
+      try { t = await api("/api/sessions/" + t.id + "/start", { method: "POST" }); }
+      catch (e) { showToast("启动失败 · " + e.message); return false; }
+      if (mobile !== mqMobile.matches || active !== targetPane || active?.gen !== targetGeneration) {
+        await loadTabs(); return false;
+      }
+    }
+    state.activeId = t.id;
+    saveActiveId(t.id);
+    attachTerminal(t);
+    await loadTabs();
+    closeDrawer();
+    return true;
+  } finally { openingTab = false; }
 }
 
 // ---- font size -------------------------------------------------------------
 function getFont() {
   let n = parseInt(localStorage.getItem("cc_fontsize") || "", 10);
-  if (!n) n = mqMobile.matches ? 11 : 12;
+  if (!n) n = mqMobile.matches ? 11 : 13;
   return Math.min(20, Math.max(8, n));
 }
 function setFont(n) {
@@ -807,6 +1101,7 @@ function setFont(n) {
 function loadTerminalFonts() {
   if (!document.fonts || typeof document.fonts.load !== "function") return;
   Promise.all([
+    document.fonts.load('13px "CC JetBrains Mono"'),
     document.fonts.load('12px "CC Terminal Mono"'),
     document.fonts.load('12px "CC Terminal Symbols"', "✓✻⠋─→"),
   ]).then(() => {
@@ -823,14 +1118,18 @@ document.getElementById("size-dn").onclick = () => setFont(getFont() - 1);
 
 // ---- aux key bar (mobile) --------------------------------------------------
 const AUX_KEYS = [
-  { l: "Esc", s: "\x1b" }, { l: "Tab", s: "\t" }, { l: "Ctrl", ctrl: true },
-  { l: "↑", s: "\x1b[A" }, { l: "↓", s: "\x1b[B" }, { l: "←", s: "\x1b[D" }, { l: "→", s: "\x1b[C" },
-  { l: "⌫", s: "\x7f" }, { l: "↵", s: "\r" }, { l: "/", s: "/" }, { l: "|", s: "|" }, { l: "~", s: "~" }, { l: "-", s: "-" },
-  // Half-width punctuation: a fallback for when the IME sits in Chinese mode and
-  // would otherwise hand the terminal full-width 。，:; instead of . , : ;
-  { l: ".", s: "." }, { l: ",", s: "," }, { l: ":", s: ":" }, { l: ";", s: ";" },
-  { l: "'", s: "'" }, { l: '"', s: '"' }, { l: "(", s: "(" }, { l: ")", s: ")" },
-  { l: "*", s: "*" }, { l: "&", s: "&" }, { l: "$", s: "$" }, { l: "_", s: "_" }, { l: "=", s: "=" },
+  { l: "Esc", s: "\x1b", primary: true }, { l: "Tab", s: "\t", primary: true }, { l: "Ctrl", ctrl: true, primary: true },
+  { l: "↑", s: "\x1b[A", gap: true, primary: true }, { l: "↓", s: "\x1b[B", primary: true },
+  { l: "↵", s: "\r", title: "回车", primary: true },
+  { l: "/", commands: true, title: "快捷命令", primary: true },
+  { l: "←", s: "\x1b[D" }, { l: "→", s: "\x1b[C" }, { l: "⌫", s: "\x7f", title: "退格", extra: true },
+  { l: "~", s: "~", gap: true }, { l: "`", s: "`" }, { l: "/", s: "/" },
+  { l: ".", s: "." }, { l: ",", s: "," }, { l: "?", s: "?" }, { l: ";", s: ";" },
+  { l: "'", s: "'" }, { l: '"', s: '"' }, { l: "[", s: "[" }, { l: "]", s: "]" },
+  { l: "-", s: "-" }, { l: "+", s: "+" }, { l: "=", s: "=" },
+  { l: ":", s: ":", extra: true },
+  { l: "|", s: "|", extra: true }, { l: "(", s: "(", extra: true }, { l: ")", s: ")", extra: true },
+  { l: "*", s: "*", extra: true }, { l: "&", s: "&", extra: true }, { l: "$", s: "$", extra: true }, { l: "_", s: "_", extra: true },
 ];
 let ctrlArmed = false;
 function ctrlByte(ch) {
@@ -840,7 +1139,7 @@ function ctrlByte(ch) {
   if (c >= 64 && c <= 95) return String.fromCharCode(c & 0x1f);
   return ch;
 }
-function updateCtrlCap() { const c = document.getElementById("cap-ctrl"); if (c) c.classList.toggle("armed", ctrlArmed); }
+function updateCtrlCap() { const c = document.getElementById("cap-ctrl"); if (c) { c.classList.toggle("armed", ctrlArmed); c.setAttribute("aria-pressed", String(ctrlArmed)); } }
 let _dropWarn = 0;
 function sendInputTo(pane, data) {
   const ws = pane && pane.ws;
@@ -851,6 +1150,8 @@ function sendInputTo(pane, data) {
 }
 function sendInput(data) { sendInputTo(active, data); }
 function deliverTo(pane, data) {
+  if (data === "\x03" || (ctrlArmed && (data === "c" || data === "C"))) { copyTerminalSelection(pane); return; }
+  if (pane && pane.tab && restartRequests.get(pane.tab.id) === "restarting") return;
   if (ctrlArmed && data.length === 1) { data = ctrlByte(data); ctrlArmed = false; updateCtrlCap(); }
   sendInputTo(pane, data);
 }
@@ -858,20 +1159,153 @@ function deliver(data) { deliverTo(active, data); }
 function buildAux() {
   const bar = document.getElementById("auxbar");
   bar.innerHTML = "";
+  const primary = document.createElement("div"); primary.className = "aux-primary";
+  const keys = document.createElement("div"); keys.className = "aux-keys";
+  bar.append(primary, keys);
   AUX_KEYS.forEach((k) => {
+    const group = k.primary ? primary : keys;
+    if (k.gap) { const gap = document.createElement("span"); gap.className = "key-gap"; gap.setAttribute("aria-hidden", "true"); group.appendChild(gap); }
     const b = document.createElement("button");
-    b.className = "keycap"; b.textContent = k.l;
+    b.className = "keycap" + (k.extra ? " extra" : "") + (/[↑↓←→]/.test(k.l) ? " arrow" : ""); b.textContent = k.l;
+    b.title = k.title || k.l;
+    b.setAttribute("aria-label", b.title);
+    if (k.commands) {
+      b.id = "cap-commands";
+      b.setAttribute("aria-haspopup", "menu");
+      b.setAttribute("aria-controls", "quick-commands");
+      b.setAttribute("aria-expanded", "false");
+      setCommandIcon(b, "SquareSlash");
+    } else if (GLYPH_ICONS[k.l]) {
+      setCommandIcon(b, k.l === "⌫" ? "Delete" : GLYPH_ICONS[k.l]);
+    }
     if (k.ctrl) b.id = "cap-ctrl";
-    b.addEventListener("mousedown", (e) => e.preventDefault());
-    b.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+    // Keep terminal focus without cancelling the click synthesized from a tap.
+    b.addEventListener("pointerdown", (e) => e.preventDefault());
     b.addEventListener("click", () => {
-      if (!active) return;
+      if (k.commands) { toggleQuickCommands(); return; }
+      if (!active || !active.term) return;
       if (k.ctrl) { ctrlArmed = !ctrlArmed; updateCtrlCap(); active.term.focus(); return; }
-      deliver(k.s); active.term.focus();
+      let data = k.s;
+      if (/^\x1b\[[ABCD]$/.test(data) && active.term.modes.applicationCursorKeysMode) data = "\x1bO" + data.slice(-1);
+      deliver(data); active.term.focus();
     });
-    bar.appendChild(b);
+    group.appendChild(b);
   });
+  updateQuickCommandState();
 }
+
+const QUICK_COMMANDS = {
+  codex: [
+    { command: "/model", label: "模型", icon: "Cpu" },
+    { command: "/fast", label: "Fast", icon: "Zap" },
+    { command: "/status", label: "状态", icon: "Info" },
+    { command: "/", label: "全部命令", icon: "List" },
+  ],
+  claude: [
+    { command: "/model", label: "模型", icon: "Cpu" },
+    { command: "/fast", label: "Fast", icon: "Zap" },
+    { command: "/status", label: "状态", icon: "Info" },
+    { command: "/", label: "全部命令", icon: "List" },
+  ],
+  opencode: [
+    { command: "/models", label: "模型", icon: "Cpu" },
+    { command: "/help", label: "帮助", icon: "CircleHelp" },
+    { command: "/", label: "全部命令", icon: "List" },
+  ],
+};
+let quickCommandTarget = null;
+function commandsForPane(pane) { return pane && pane.tab ? QUICK_COMMANDS[pane.tab.type] || [] : []; }
+function quickTargetValid(target) {
+  return !!(target && active && target.pane === active && target.gen === active.gen && target.ws === active.ws &&
+    active.term && !active.dead && !active.closedByUser && active.ws && active.ws.readyState === 1 &&
+    restartRequests.get(active.tab?.id) !== "restarting");
+}
+function updateQuickCommandState() {
+  const button = document.getElementById("cap-commands");
+  if (!button) return;
+  button.disabled = !active || !active.term || active.dead || !active.ws || active.ws.readyState !== 1 || !commandsForPane(active).length || restartRequests.get(active.tab?.id) === "restarting";
+  if (quickCommandTarget && (!quickTargetValid(quickCommandTarget) || !commandsForPane(active).length)) closeQuickCommands(false);
+}
+function closeQuickCommands(restoreFocus = true) {
+  const menu = document.getElementById("quick-commands");
+  const wasOpen = layerOpen(menu);
+  menu.classList.add("hidden");
+  quickCommandTarget = null;
+  const button = document.getElementById("cap-commands");
+  if (button) {
+    button.setAttribute("aria-expanded", "false");
+    if (wasOpen && restoreFocus && !button.disabled) button.focus({ preventScroll: true });
+  }
+}
+function insertQuickCommand(command, target) {
+  if (!layerOpen(document.getElementById("quick-commands"))) return;
+  if (!quickTargetValid(target) || !commandsForPane(target.pane).some(item => item.command === command)) {
+    closeQuickCommands(false);
+    showToast("终端连接已变化，命令未送出");
+    return;
+  }
+  // Use the application's paste mode; never clear a draft or synthesize Enter.
+  try { target.pane.term.paste(command); }
+  catch (_) { closeQuickCommands(false); showToast("连接已中断，命令未送出"); return; }
+  ctrlArmed = false;
+  updateCtrlCap();
+  closeQuickCommands();
+  if (!COARSE) target.pane.term.focus();
+}
+function toggleQuickCommands() {
+  const menu = document.getElementById("quick-commands");
+  if (layerOpen(menu)) { closeQuickCommands(); return; }
+  const target = active && { pane: active, gen: active.gen, ws: active.ws };
+  if (!quickTargetValid(target) || !commandsForPane(active).length) { updateQuickCommandState(); return; }
+  closeRecentSessions(false);
+  closeDrawer();
+  if (COARSE) {
+    kbdOn = false;
+    panes.forEach(pane => pane.term && applyKbdMode(pane.term));
+    try { active.term.textarea.blur(); } catch (_) {}
+    updateKbdBtn();
+  }
+  quickCommandTarget = target;
+  document.getElementById("quick-commands-title").textContent = typeLabel(active.tab.type) + " · 快捷命令";
+  const list = document.getElementById("quick-command-list");
+  list.replaceChildren();
+  for (const item of commandsForPane(active)) {
+    const button = document.createElement("button");
+    button.className = "quick-command-row";
+    button.dataset.command = item.command;
+    button.setAttribute("role", "menuitem");
+    button.setAttribute("aria-label", item.command + " · " + item.label);
+    button.innerHTML = '<span class="quick-command-icon" aria-hidden="true">' + uiIcon(item.icon) + '</span><span class="quick-command-name"></span><span class="quick-command-label"></span>';
+    button.querySelector(".quick-command-name").textContent = item.command;
+    button.querySelector(".quick-command-label").textContent = item.label;
+    button.onclick = () => insertQuickCommand(item.command, target);
+    list.appendChild(button);
+  }
+  menu.classList.remove("hidden");
+  document.getElementById("cap-commands").setAttribute("aria-expanded", "true");
+  list.querySelector("button").focus({ preventScroll: true });
+}
+document.getElementById("quick-commands-close").onclick = () => closeQuickCommands();
+document.addEventListener("pointerdown", event => {
+  const menu = document.getElementById("quick-commands");
+  if (layerOpen(menu) && !menu.contains(event.target) && !document.getElementById("cap-commands").contains(event.target)) closeQuickCommands(false);
+}, true);
+document.addEventListener("keydown", event => {
+  const menu = document.getElementById("quick-commands");
+  if (!layerOpen(menu)) return;
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeQuickCommands(); return; }
+  if (event.key === "Tab") { closeQuickCommands(); return; }
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const buttons = Array.from(menu.querySelectorAll(".quick-command-row"));
+  if (!buttons.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const current = buttons.indexOf(document.activeElement);
+  const index = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
+    (current + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+  buttons[index].focus();
+}, true);
+mqMobile.addEventListener("change", () => closeQuickCommands(false));
 
 // ---- terminal panes (split view) -------------------------------------------
 // `panes` holds every visible split cell; `active` points at the FOCUSED pane so
@@ -880,14 +1314,15 @@ function buildAux() {
 const MAX_PANES = 4;
 let panes = [];
 let active = null; // the focused pane: { term, fit, ws, tab, el, host, dead, ... }
+let maximizedPane = null;
 
 function paneOfTab(id) { return panes.find((p) => p.tab && p.tab.id === id) || null; }
 function savePaneLayout() {
   try { localStorage.setItem("cc_panes", JSON.stringify(panes.map((p) => (p.tab ? p.tab.id : null)))); } catch (e) {}
+  window.ccWorkspace?.layoutChanged();
 }
 // Split direction: "auto" picks side-by-side only when each cell stays usable,
 // otherwise stacks top-to-bottom. "row"/"col" force it.
-const MIN_PANE_W = 460;
 function paneDirMode() { return localStorage.getItem("cc_pane_dir") || "auto"; }
 function effectivePaneDir() {
   const mode = paneDirMode();
@@ -896,7 +1331,7 @@ function effectivePaneDir() {
   const box = document.getElementById("panes");
   const w = (box && box.clientWidth) || window.innerWidth || 1000;
   const colsIfRow = panes.length >= 2 ? 2 : 1;
-  return (w / colsIfRow) < MIN_PANE_W ? "col" : "row";
+  return window.innerWidth >= 1024 && w / colsIfRow >= 240 ? "row" : "col";
 }
 function updateDirBtn() {
   const b = document.getElementById("btn-dir");
@@ -904,6 +1339,7 @@ function updateDirBtn() {
   const mode = paneDirMode();
   const eff = effectivePaneDir();
   b.textContent = mode === "auto" ? (eff === "col" ? "⇅" : "⇄") : (mode === "col" ? "⇅" : "⇄");
+  setCommandIcon(b, (mode === "auto" ? eff : mode) === "col" ? "Rows2" : "Columns2");
   b.classList.toggle("auto-mode", mode === "auto");
   b.title = "分屏方向：" + (mode === "auto" ? "自动(当前" + (eff === "col" ? "上下" : "左右") + ")" : mode === "row" ? "左右" : "上下") + " · 点击切换";
 }
@@ -926,8 +1362,9 @@ let gridFr = (function () {
   } catch (e) {}
   return { cols: [1, 1], rows: [1, 1, 1, 1] };
 })();
-function saveGridFr() { try { localStorage.setItem("cc_pane_fr", JSON.stringify(gridFr)); } catch (e) {} }
+function saveGridFr() { try { localStorage.setItem("cc_pane_fr", JSON.stringify(gridFr)); } catch (e) {} window.ccWorkspace?.layoutChanged(); }
 function gridShape() {
+  if (maximizedPane) return { cols: 1, rows: 1 };
   const n = Math.max(1, panes.length);
   const eff = (document.getElementById("panes") || {}).getAttribute
     ? document.getElementById("panes").getAttribute("data-eff") : "row";
@@ -949,12 +1386,38 @@ function applyGridTemplate() {
   const sh = gridShape();
   box.style.gridTemplateColumns = frTemplate(gridFr.cols, sh.cols);
   box.style.gridTemplateRows = frTemplate(gridFr.rows, sh.rows);
+  // Divider nodes can precede panes after reconciliation or a swap. Place cells
+  // by their model order, never by their child index in the mixed DOM container.
+  panes.forEach((pane, index) => {
+    if (maximizedPane) pane.el.style.gridArea = "1 / 1 / 2 / 2";
+    else if (sh.cols === 2 && panes.length === 3) {
+      pane.el.style.gridArea = ["1 / 1 / 3 / 2", "1 / 2 / 2 / 3", "2 / 2 / 3 / 3"][index];
+    } else {
+      const row = Math.floor(index / sh.cols) + 1, col = index % sh.cols + 1;
+      pane.el.style.gridArea = `${row} / ${col} / ${row + 1} / ${col + 1}`;
+    }
+  });
 }
 function renderGutters() {
   const box = document.getElementById("panes");
   if (!box) return;
-  Array.from(box.querySelectorAll(".gutter")).forEach((g) => g.remove());
-  if (panes.length < 2) return;
+  const existing = new Map(Array.from(box.querySelectorAll(".gutter")).map((g) => [g.dataset.divider, g]));
+  if (panes.length < 2 || maximizedPane) { existing.forEach((g) => g.remove()); return; }
+  // Preserve nodes across refits so pointer capture and double-click survive.
+  function gutter(axis, idx) {
+    const key = axis + idx;
+    let g = existing.get(key);
+    if (g) existing.delete(key);
+    else {
+      g = document.createElement("div");
+      g.dataset.divider = key;
+      g.className = "gutter " + (axis === "col" ? "v" : "h");
+      g.title = axis === "col" ? "拖动调整宽度 · 双击复位" : "拖动调整高度 · 双击复位";
+      wireGutter(g, axis, idx);
+      box.appendChild(g);
+    }
+    return g;
+  }
   const sh = gridShape();
   const cs = getComputedStyle(box);
   const gap = parseFloat(cs.rowGap || cs.gap) || 0;
@@ -964,25 +1427,18 @@ function renderGutters() {
   const rowPx = cs.gridTemplateRows.split(" ").map(parseFloat);
   const sum = (a, k) => a.slice(0, k).reduce((x, y) => x + (y || 0), 0);
   for (let i = 0; i < sh.cols - 1; i++) {
-    const g = document.createElement("div");
-    g.className = "gutter v";
+    const g = gutter("col", i);
     g.style.left = (padL + sum(colPx, i + 1) + i * gap + gap / 2) + "px";
     g.style.top = padT + "px"; g.style.bottom = padB + "px";
-    g.title = "拖动调整宽度 · 双击复位";
-    wireGutter(g, "col", i);
-    box.appendChild(g);
   }
   for (let j = 0; j < sh.rows - 1; j++) {
-    const g = document.createElement("div");
-    g.className = "gutter h";
+    const g = gutter("row", j);
     g.style.top = (padT + sum(rowPx, j + 1) + j * gap + gap / 2) + "px";
     // with 3 cells the left one spans both rows, so this divider only covers col 2
     g.style.left = ((sh.cols === 2 && panes.length === 3) ? padL + (colPx[0] || 0) + gap : padL) + "px";
     g.style.right = padR + "px";
-    g.title = "拖动调整高度 · 双击复位";
-    wireGutter(g, "row", j);
-    box.appendChild(g);
   }
+  existing.forEach((g) => g.remove());
 }
 function wireGutter(g, axis, idx) {
   g.addEventListener("dblclick", () => {
@@ -1042,28 +1498,65 @@ function cyclePaneDir() {
 function layoutPanes() {
   const box = document.getElementById("panes");
   box.setAttribute("data-n", String(Math.max(1, panes.length)));
+  box.setAttribute("data-maximized", String(!!maximizedPane));
   applyPaneDir();
   panes.forEach((p) => p.el.classList.toggle("focused", p === active));
-  const splitBtn = document.getElementById("btn-split");
-  if (splitBtn) splitBtn.disabled = panes.length >= MAX_PANES;
+  panes.forEach((p) => {
+    p.el.classList.toggle("maximized", p === maximizedPane);
+    const button = p.el.querySelector(".pane-expand");
+    button.title = p === maximizedPane ? "恢复分屏" : "放大此窗";
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-pressed", String(p === maximizedPane));
+    setCommandIcon(button, p === maximizedPane ? "Minimize2" : "Maximize2");
+  });
+  for (const id of ["btn-split", "header-split"]) document.getElementById(id).disabled = !window.ccWorkspace && panes.length >= MAX_PANES;
   setTimeout(refitAll, 60);
 }
-function refitAll() { panes.forEach((p) => refit(p)); }
+function refitAll() {
+  panes.forEach((p) => refit(p));
+  // Toolbar/quota changes move the gaps too. Keep drag handles off pane buttons,
+  // but don't replace a handle while it owns pointer capture during a drag.
+  if (!document.body.classList.contains("gutter-dragging")) renderGutters();
+}
+
+let workspaceResizeFrame = 0;
+let workspaceNeedsDirection = false;
+function scheduleWorkspaceFit(updateDirection = false) {
+  workspaceNeedsDirection = workspaceNeedsDirection || updateDirection;
+  if (workspaceResizeFrame) return;
+  workspaceResizeFrame = requestAnimationFrame(() => {
+    workspaceResizeFrame = 0;
+    if (workspaceNeedsDirection) { workspaceNeedsDirection = false; applyPaneDir(); }
+    refitAll();
+  });
+}
+// Container changes do not always produce a window resize event.
+const workspaceGrid = document.getElementById("panes");
+const workspaceResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(entries => {
+  scheduleWorkspaceFit(entries.some(entry => entry.target === workspaceGrid));
+}) : null;
+if (workspaceResizeObserver) workspaceResizeObserver.observe(workspaceGrid);
 
 function setStatus(klass, text, pane) {
   const p = pane || active;
+  if (p?.tab && restartRequests.get(p.tab.id) === "restarting") { klass = "reconnecting"; text = "重启中"; }
   if (p && p.el) {
+    p.connectionState = klass;
     const pc = p.el.querySelector(".pane-conn");
     if (pc) pc.textContent = text;
     const pd = p.el.querySelector(".pane-bar .status-dot");
     if (pd) pd.className = "status-dot " + (klass === "connected" ? "green" : klass === "closed" ? "grey" : klass === "reconnecting" ? "yellow" : "blue");
   }
+  if (p) window.ccNativeInput?.update(p);
+  updateInterruptControl();
   if (p && p !== active) return;             // background pane: don't touch global header
+  updateQuickCommandState();
   const c = document.getElementById("term-conn");
   c.className = "conn " + klass; c.textContent = text;
   const dot = document.getElementById("term-dot");
   dot.className = "status-dot " + (klass === "connected" ? "green" : klass === "closed" ? "grey" : klass === "reconnecting" ? "yellow" : "blue");
   document.getElementById("topbar-status").textContent = active ? text : "";
+  document.getElementById("footer-state").textContent = klass === "connected" ? "RUNNING TASK" : klass.toUpperCase();
 }
 function refit(pane) {
   const p = pane || active;
@@ -1075,16 +1568,26 @@ function refit(pane) {
   const r = p.host && p.host.getBoundingClientRect();
   if (!r || r.width < 40 || r.height < 40) return;
   try {
+    const term = p.term, cols = term.cols, rows = term.rows;
+    const metrics = [r.width, r.height, devicePixelRatio, term.options.fontSize, term.options.fontFamily,
+      term.options.lineHeight, term.options.letterSpacing].join("|");
     p.fit.fit();
     sendResize(p);
-    // iOS occasionally drops the repaint that should follow a resize.
-    if (p.term.rows > 0) p.term.refresh(0, p.term.rows - 1);
+    // Keep the iOS resize repaint, not a full refresh on every layout check.
+    if (term.rows > 0 && (p._lastFit?.term !== term || p._lastFit.metrics !== metrics || cols !== term.cols || rows !== term.rows)) {
+      term.refresh(0, term.rows - 1);
+    }
+    p._lastFit = { term, metrics };
   } catch (e) {}
 }
 function sendResize(pane) {
   const p = pane || active;
   const ws = p && p.ws;
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: p.term.cols, rows: p.term.rows }));
+  if (!ws || ws.readyState !== 1 || !p.term || p.term.cols < 1 || p.term.rows < 1) return;
+  const cols = p.term.cols, rows = p.term.rows, last = p._lastResize;
+  if (last && last.ws === ws && last.cols === cols && last.rows === rows) return;
+  ws.send(JSON.stringify({ type: "resize", cols, rows }));
+  p._lastResize = { ws, cols, rows };
 }
 
 function paneHeader(p) {
@@ -1187,9 +1690,12 @@ async function refreshCodexUsage(force) {
   })();
   return codexUsagePending;
 }
-function focusPane(p) {
-  if (!p || p === active) { if (p) try { p.term && p.term.focus(); } catch (e) {} return; }
+function focusPane(p, focusTerminal = true) {
+  if (!p || p === active) { if (p && focusTerminal) try { p.term && p.term.focus(); } catch (e) {} return; }
   active = p;
+  updateRestartControls();
+  updateQuickCommandState();
+  if (maximizedPane && maximizedPane !== p) { maximizedPane = p; layoutPanes(); }
   panes.forEach((x) => x.el.classList.toggle("focused", x === active));
   renderAllCodexUsage();
   scheduleCodexUsageRefresh();
@@ -1204,8 +1710,17 @@ function focusPane(p) {
     saveActiveId(p.tab.id);
     renderTabs();
   }
-  try { p.term && p.term.focus(); } catch (e) {}
+  window.ccWorkspace?.focusChanged();
+  window.ccAppearance?.sync();
+  if (focusTerminal) try { p.term && p.term.focus(); } catch (e) {}
 }
+
+function togglePaneMaximized(p) {
+  maximizedPane = maximizedPane === p ? null : p;
+  focusPane(p, false);
+  layoutPanes();
+}
+
 // Swap two cells' positions. We move the pane ELEMENTS (never re-create the
 // terminals), so sessions, scrollback and sockets are untouched by a swap.
 let dragSrcPane = null;
@@ -1231,11 +1746,20 @@ function makePane() {
     '<div class="pane-bar" draggable="true" title="拖动此栏可与其它格交换位置">' +
     '<span class="status-dot grey"></span><span class="pane-name">空白分屏</span>' +
     '<span class="pane-conn">—</span>' +
+    '<button class="pane-expand" title="放大此窗" aria-label="放大此窗" aria-pressed="false">⛶</button>' +
+    '<button class="pane-restart hidden" title="重启并恢复原会话" aria-label="重启并恢复原会话"></button>' +
     '<button class="pane-swap" title="与下一格交换位置">⇄</button>' +
     '<button class="pane-x" title="关闭此格">✕</button></div>' +
     '<div class="pane-host"></div>' +
     '<div class="codex-usage hidden" aria-live="polite"></div>';
+  setCommandIcon(el.querySelector(".pane-expand"), "Maximize2");
+  setCommandIcon(el.querySelector(".pane-restart"), "RotateCw");
+  setCommandIcon(el.querySelector(".pane-swap"), "ArrowLeftRight");
+  setCommandIcon(el.querySelector(".pane-x"), "X");
   const p = { el, host: el.querySelector(".pane-host"), usage: el.querySelector(".codex-usage"), term: null, fit: null, ws: null, tab: null, dead: false, closedByUser: false, gen: 0, _reconnectTimer: null, _disposeWheel: null, _disposeIme: null };
+  el.querySelector(".pane-expand").onclick = e => { e.stopPropagation(); togglePaneMaximized(p); };
+  el.querySelector(".pane-restart").onclick = e => { e.stopPropagation(); requestRestartTab(p.tab); };
+  el.querySelector(".pane-restart").addEventListener("mousedown", e => e.stopPropagation());
   el.querySelector(".pane-x").onclick = (e) => { e.stopPropagation(); closePane(p); };
   el.querySelector(".pane-swap").onclick = (e) => {
     e.stopPropagation();
@@ -1243,8 +1767,9 @@ function makePane() {
     const i = panes.indexOf(p);
     swapPanes(i, (i + 1) % panes.length);   // cyclic: last swaps with first
   };
-  el.addEventListener("mousedown", () => focusPane(p));
-  el.addEventListener("touchstart", () => focusPane(p), { passive: true });
+  const focus = () => focusPane(p);
+  el.addEventListener("mousedown", focus);
+  el.addEventListener("touchstart", () => focusPane(p, false), { passive: true });
   p.usage.addEventListener("click", (e) => {
     const retry = e.target.closest && e.target.closest(".codex-usage-retry");
     if (!retry) return;
@@ -1282,6 +1807,7 @@ function makePane() {
 
   document.getElementById("panes").appendChild(el);
   panes.push(p);
+  if (workspaceResizeObserver) workspaceResizeObserver.observe(p.host);
   showPaneEmpty(p);
   return p;
 }
@@ -1289,9 +1815,12 @@ function showPaneEmpty(p) {
   if (p.usage) p.usage.classList.add("hidden");
   p.host.innerHTML = '<div class="pane-empty"><div class="big">＋</div><div>点这里,或从左侧列表选一个终端</div></div>';
   const ph = p.host.querySelector(".pane-empty");
-  if (ph) ph.onclick = () => { focusPane(p); openDirModal(); };
+  if (ph) ph.onclick = () => { focusPane(p, false); window.ccWorkspace ? window.ccWorkspace.openSplitPicker() : openDirModal(); };
 }
 function teardownPane(p, keepEl) {
+  window.ccNativeInput?.detach(p);
+  window.ccAppearance?.detach(p);
+  if (!keepEl && maximizedPane === p) maximizedPane = null;
   // Bump the generation FIRST: ws.close() is async, so the old socket's onclose
   // fires after attachTerminal has already reset dead/closedByUser for the new
   // mount. Without this the stale closure would "reconnect" the OLD session and
@@ -1299,7 +1828,8 @@ function teardownPane(p, keepEl) {
   p.gen = (p.gen || 0) + 1;
   p.dead = true; p.closedByUser = true;
   if (p._reconnectTimer) { clearTimeout(p._reconnectTimer); p._reconnectTimer = null; }
-  if (p._onWinResize) window.removeEventListener("resize", p._onWinResize);
+  if (!keepEl && workspaceResizeObserver) workspaceResizeObserver.unobserve(p.host);
+  p._lastResize = null;
   try { p._disposeWheel && p._disposeWheel(); } catch (e) {}
   try { p._disposeIme && p._disposeIme(); } catch (e) {}
   try { p._disposeTouchSel && p._disposeTouchSel(); } catch (e) {}
@@ -1324,7 +1854,10 @@ function splitPane() {
   if (panes.length >= MAX_PANES) { showToast("最多 " + MAX_PANES + " 格"); return; }
   if (!panes.length) { document.getElementById("empty").classList.add("hidden"); document.getElementById("term-view").classList.remove("hidden"); }
   const p = makePane();
+  maximizedPane = null;
   active = p;
+  updateQuickCommandState();
+  updateRestartControls();
   layoutPanes(); savePaneLayout();
   showToast("已新增分屏 · 从左侧选一个终端,或点空格新建");
   if (mqMobile.matches) body.classList.add("drawer-open");
@@ -1348,6 +1881,12 @@ function wheelToLines(ev, term) {
   const unit = ev.deltaMode === 1 ? 1 : ev.deltaMode === 2 ? (term ? term.rows : 24) : 1 / rowPx(term);
   const lines = Math.min(120, Math.abs(raw) * unit);
   return raw > 0 ? lines : -lines;
+}
+function wheelRow(ev, term) {
+  const screen = term.element && term.element.querySelector(".xterm-screen");
+  const rect = screen && screen.getBoundingClientRect();
+  if (!rect || !rect.height || !Number.isFinite(ev.clientY) || ev.clientY < rect.top || ev.clientY >= rect.bottom) return Math.min(term.rows, 2);
+  return Math.max(1, Math.min(term.rows, Math.floor((ev.clientY - rect.top) / rowPx(term)) + 1));
 }
 // Our own SGR wheel report coming back in the OUTPUT stream can only mean one
 // thing: whatever is on the other end is echoing it as text instead of reading
@@ -1373,8 +1912,8 @@ function noteMouseEcho(pane, bytes) {
 function appWantsMouse(term, pane) {
   // Because we run over `tmux attach`, tmux itself holds the outer terminal on
   // the alternate screen, so xterm's buffer type is ALWAYS "alternate" and can't
-  // tell which program owns history. Forward enabled mouse reporting; the
-  // backend checks the inner screen for programs without mouse reporting.
+  // tell claude from codex. The reliable signal is whether the inner app enabled
+  // mouse reporting (tmux passes it through): claude does, codex/plain-shell don't.
   let m = "none";
   try { m = (term.modes && term.modes.mouseTrackingMode) || "none"; } catch (e) { return false; }
   if (m === "none") {
@@ -1391,9 +1930,10 @@ function attachTerminalWheelHandler(term, host, pane) {
   // Two kinds of sessions need opposite handling:
   //  • mouse-reporting apps (claude): forward the wheel so the app scrolls its
   //    own view — tmux has no scrollback for them (they own the inner screen).
-  //  • non-mouse apps: ask the backend to choose tmux history or fullscreen
-  //    Codex's native transcript. Swallow the event so xterm's alternate-scroll
-  //    handling cannot turn it into input-history arrow keys.
+  //  • non-mouse apps: the server chooses normal-buffer tmux history or native
+  //    wheel events for fullscreen Codex. We must also swallow the
+  //    event so xterm's alternate-scroll-mode doesn't turn the wheel into arrow
+  //    keys (which is why codex's wheel only moved the input box).
   let remainder = 0, lastWheelAt = 0, lastSocket = null;
   const handler = (ev) => {
     if (appWantsMouse(term, pane || active)) {
@@ -1417,7 +1957,7 @@ function attachTerminalWheelHandler(term, host, pane) {
       remainder += delta;
       const lines = Math.trunc(remainder);
       remainder -= lines;
-      if (lines) ws.send(JSON.stringify({ type: "scroll", lines }));
+      if (lines) ws.send(JSON.stringify({ type: "scroll", lines, row: wheelRow(ev, term) }));
     }
     if (ev && ev.preventDefault) ev.preventDefault();
     if (ev && ev.stopPropagation) ev.stopPropagation();
@@ -1435,7 +1975,9 @@ function attachTerminalWheelHandler(term, host, pane) {
       ev.stopPropagation();
       return;
     }
-    if (!hasCustomHandler) handler(ev);
+    // Fit leaves padding and sometimes an unpainted row below the screen.
+    // Capture non-mouse scrolling on the whole host, not only xterm's surface.
+    if (!hasCustomHandler || !appWantsMouse(term, pane || active)) handler(ev);
   };
   host.addEventListener("wheel", domHandler, { passive: false, capture: true });
   return () => host.removeEventListener("wheel", domHandler, { capture: true });
@@ -1503,7 +2045,7 @@ function attachImeInput(term, pane) {
 
 const TERM_THEME = {
   dark: {
-    background: "#1E1E1E", foreground: "#E4E4E4", cursor: "#E4E4E4", cursorAccent: "#1E1E1E",
+    background: "#00000000", foreground: "#D1D5DB", cursor: "#D1D5DB", cursorAccent: "#0F1115",
     selectionBackground: "rgba(255,255,255,0.20)",
     black: "#3A3A3A", red: "#FF6B60", green: "#6BD96B", yellow: "#F1D32B", blue: "#6EA8FF",
     magenta: "#D58AFF", cyan: "#62D4D4", white: "#D6D6D6",
@@ -1511,7 +2053,7 @@ const TERM_THEME = {
     brightBlue: "#9CC4FF", brightMagenta: "#E3B3FF", brightCyan: "#9CE9E9", brightWhite: "#FFFFFF",
   },
   light: {
-    background: "#FFFFFF", foreground: "#242424", cursor: "#242424", cursorAccent: "#FFFFFF",
+    background: "#00000000", foreground: "#27313A", cursor: "#27313A", cursorAccent: "#FBFCFD",
     selectionBackground: "rgba(15,108,189,0.20)",
     black: "#1A1A1A", red: "#C0392B", green: "#1E8E3E", yellow: "#9A6E00", blue: "#1A66D6",
     magenta: "#A21CAF", cyan: "#0E7C86", white: "#3C3C3C",
@@ -1519,11 +2061,23 @@ const TERM_THEME = {
     brightBlue: "#1A73E8", brightMagenta: "#C026D3", brightCyan: "#12808A", brightWhite: "#000000",
   },
 };
-function termTheme() { return TERM_THEME[currentTheme()] || TERM_THEME.dark; }
-function setTitlebar(t) { const el = document.getElementById("titlebar-title"); if (el) el.textContent = t || "CC Terminal"; }
+function termTheme(t = currentTheme()) {
+  const base = TERM_THEME[t] || TERM_THEME.dark;
+  return window.ccAppearance?.terminalTheme(base, t) || base;
+}
+function setTitlebar(t) {
+  const tab = active && active.tab;
+  const el = document.getElementById("titlebar-title"); if (el) el.textContent = tab ? (tab.name || tab.id) : (t || "CC Terminal");
+  document.getElementById("workspace-project").textContent = tab ? tabBasename(tab.cwd) : "工作区";
+  document.getElementById("footer-session").textContent = tab ? "cc_" + tab.id : "—";
+  if (!tab) document.getElementById("footer-state").textContent = "READY";
+  document.getElementById("btn-tools").disabled = !tab;
+  document.getElementById("topbar-tools").disabled = !tab;
+}
 
 // Open `tab` inside a pane (defaults to the focused pane; creates the first one).
 function attachTerminal(tab, pane) {
+  closeQuickCommands(false);
   document.getElementById("empty").classList.add("hidden");
   document.getElementById("term-view").classList.remove("hidden");
 
@@ -1532,9 +2086,13 @@ function attachTerminal(tab, pane) {
   if (p.term) teardownPane(p, true);            // reuse the cell: drop its old terminal
   p.dead = false; p.closedByUser = false;
   p.tab = tab;
+  state.activeId = tab.id;
+  saveActiveId(tab.id);
+  renderRecentSessions();
   p.host.innerHTML = "";
   active = p;
   paneHeader(p);
+  updateRestartControls();
   renderAllCodexUsage();
   scheduleCodexUsageRefresh();
   if (tab.type === "codex") refreshCodexUsage(false);
@@ -1546,10 +2104,12 @@ function attachTerminal(tab, pane) {
 
   const term = new Terminal({
     cursorBlink: true,
+    allowTransparency: true,
     fontSize: getFont(),
     fontFamily: TERMINAL_FONT_FAMILY,
     letterSpacing: 0,
-    lineHeight: 1.15,
+    // xterm scales measured glyph height, not CSS font-size (21px rows at 13px).
+    lineHeight: 1.25,
     scrollback: 10000,
     customGlyphs: true,
     rescaleOverlappingGlyphs: true,
@@ -1570,9 +2130,8 @@ function attachTerminal(tab, pane) {
   term.onData((d) => deliverTo(p, d));
   const disposeWheel = attachTerminalWheelHandler(term, host, p);
   const disposeIme = attachImeInput(term, p);
-  // Ctrl+Shift+C (Cmd+C on mac/iPad) copies the selection instead of reaching
-  // the shell — plain Ctrl+C must stay SIGINT. Only intercepted when something
-  // is actually selected, so the combo is otherwise passed through untouched.
+  // Browser copy shortcuts must never become SIGINT, even without a selection
+  // or when clipboard access fails. Interruption is a separate toolbar command.
   applyKbdMode(term);
   installSelectMode(term);
   const disposeTouchSel = attachTouchSelection(term, host, p);
@@ -1587,17 +2146,13 @@ function attachTerminal(tab, pane) {
     copyText(hit.text).then((ok) => showToast(ok ? "已复制选中内容 (" + hit.text.length + " 字)" : "复制失败,浏览器拒绝了剪贴板访问"));
   });
   term.attachCustomKeyEventHandler((ev) => {
-    if (ev.type !== "keydown" || (ev.key || "").toLowerCase() !== "c") return true;
+    if ((ev.key || "").toLowerCase() !== "c") return true;
     const mac = /Mac|iP(ad|hone|od)/.test(navigator.platform || "") || /Mac|iP(ad|hone|od)/.test(navigator.userAgent);
-    const combo = mac ? (ev.metaKey && !ev.ctrlKey) : (ev.ctrlKey && ev.shiftKey);
+    const combo = !ev.altKey && ((ev.ctrlKey && !ev.metaKey) || (mac && ev.metaKey && !ev.ctrlKey)
+      || (ctrlArmed && !ev.ctrlKey && !ev.metaKey));
     if (!combo) return true;
-    const hit = currentSelection();
-    if (!hit) return true;
-    const sel = hit.text;
-    // preventDefault matters: otherwise the browser also runs its own copy over
-    // an empty DOM selection and can wipe what we just put on the clipboard.
     ev.preventDefault();
-    copyText(sel).then((ok) => showToast(ok ? "已复制选中内容 (" + sel.length + " 字)" : "复制失败,浏览器拒绝了剪贴板访问"));
+    if (ev.type === "keydown" && !ev.repeat) copyTerminalSelection(p);
     return false;
   });
 
@@ -1636,8 +2191,6 @@ function attachTerminal(tab, pane) {
     };
     ws.onerror = () => { try { ws.close(); } catch (e) {} };
   }
-  p._onWinResize = () => refit(p);
-  window.addEventListener("resize", p._onWinResize);
   // NOTE: click/tap focusing is wired once in makePane() on the pane element —
   // re-adding it per mount stacked stale listeners holding disposed terminals.
   connect();
@@ -1647,26 +2200,32 @@ function attachTerminal(tab, pane) {
   // refresh, which mounts async). rAF + a timeout backstop makes it stick.
   requestAnimationFrame(() => { if (active === p) try { term.focus(); } catch (e) {} });
   setTimeout(() => { if (active === p && p.term) try { p.term.focus(); } catch (e) {} }, 80);
+  window.ccAppearance?.sync();
+  window.ccNativeInput?.sync();
 }
 
 function closeAllPanes() {
   panes.forEach((p) => teardownPane(p));
-  panes = []; active = null;
+  panes = []; active = null; maximizedPane = null;
+  updateQuickCommandState();
+  updateRestartControls();
   clearTimeout(codexUsageTimer); codexUsageTimer = null;
   ctrlArmed = false; updateCtrlCap();
   document.getElementById("panes").innerHTML = "";
   document.getElementById("topbar-status").textContent = "";
   savePaneLayout();
-  const sb = document.getElementById("btn-split");
-  if (sb) sb.disabled = false;
+  for (const id of ["btn-split", "header-split"]) document.getElementById(id).disabled = false;
 }
 function closeActiveView() {
+  toggleTools(false);
   closeAllPanes();
   document.getElementById("term-view").classList.add("hidden");
   document.getElementById("empty").classList.remove("hidden");
   setTitlebar();
 }
 document.getElementById("btn-stop").onclick = () => { requestStopActive(); };
+document.getElementById("btn-interrupt").onclick = requestInterruptActive;
+document.getElementById("btn-restart").onclick = () => { if (active) requestRestartTab(active.tab); };
 
 // ---- fullscreen + aux-key bar toggle ---------------------------------------
 function isFs() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
@@ -1686,12 +2245,14 @@ function updateFsBtn() {
   const b = document.getElementById("btn-fs");
   if (b) {
     b.textContent = isFs() ? "⤢" : "⛶";
+    setCommandIcon(b, isFs() ? "Minimize" : "Maximize");
     b.title = isFs() ? "退出全屏" : "全屏";
     b.setAttribute("aria-label", b.title);
   }
   const titleButton = document.getElementById("tl-green");
   if (titleButton) {
     titleButton.textContent = isFs() ? "⤢" : "⛶";
+    setCommandIcon(titleButton, isFs() ? "Minimize" : "Maximize");
     titleButton.title = isFs() ? "退出全屏" : "全屏";
     titleButton.setAttribute("aria-label", titleButton.title);
   }
@@ -1703,6 +2264,7 @@ document.getElementById("btn-fs").onclick = toggleFullscreen;
 document.getElementById("tl-green").onclick = toggleFullscreen;
 
 function toggleAux() {
+  closeQuickCommands(false);
   const bar = document.getElementById("auxbar");
   const visible = getComputedStyle(bar).display !== "none";
   document.body.classList.remove("aux-shown", "aux-hidden");
@@ -1720,26 +2282,25 @@ function applySidebarState() {
   const b = document.getElementById("btn-sidebar");
   if (b) {
     b.textContent = "☰";
+    setCommandIcon(b, hidden ? "PanelLeftOpen" : "PanelLeftClose");
     b.title = hidden ? "显示侧边栏" : "隐藏侧边栏";
     b.setAttribute("aria-label", b.title);
     b.setAttribute("aria-expanded", String(!hidden));
   }
 }
-function toggleSidebar() {
-  const hidden = localStorage.getItem("cc_sb_hidden") === "1";
-  localStorage.setItem("cc_sb_hidden", hidden ? "0" : "1");
+function setSidebarHidden(hidden) {
+  localStorage.setItem("cc_sb_hidden", hidden ? "1" : "0");
   applySidebarState();
   // the terminals just got wider/narrower — re-fit after the CSS transition
   setTimeout(() => { applyPaneDir(); refitAll(); }, 210);
 }
+function toggleSidebar() { setSidebarHidden(localStorage.getItem("cc_sb_hidden") !== "1"); }
+document.getElementById("window-minimise").onclick = () => { if (mqMobile.matches) closeDrawer(); else toggleSidebar(); };
+document.getElementById("window-close").onclick = closeActiveView;
 document.getElementById("btn-sidebar").onclick = toggleSidebar;
 applySidebarState();
-// Re-evaluate the auto direction when the window is resized (debounced).
-let _dirTimer = null;
-window.addEventListener("resize", () => {
-  clearTimeout(_dirTimer);
-  _dirTimer = setTimeout(() => { applyPaneDir(); refitAll(); }, 120);
-});
+// Also covers browsers without ResizeObserver and viewport breakpoint changes.
+window.addEventListener("resize", () => scheduleWorkspaceFit(true));
 mqMobile.addEventListener("change", (e) => { if (!e.matches) closeDrawer(); });
 updateDirBtn();
 
@@ -1756,7 +2317,8 @@ async function uploadOneImage(file, cwd) {
   const fd = new FormData();
   fd.append("cwd", cwd);
   fd.append("file", file, file.name || "image.png");
-  const r = await fetch("/api/term/image", { method: "POST", body: fd, credentials: "same-origin" });
+  const headers = getToken() ? { Authorization: "Bearer " + getToken() } : {};
+  const r = await fetch("/api/term/image", { method: "POST", body: fd, headers, credentials: "same-origin" });
   if (r.status === 401) { setTokenPrompt(); throw new Error("需要有效 Token"); }
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).detail || m; } catch (e) {} throw new Error(m); }
   return (await r.json()).path;
@@ -1764,16 +2326,21 @@ async function uploadOneImage(file, cwd) {
 
 // --- image modal (pick / paste / drag) ---
 let imgStaged = []; // [{ file, url }]
-function openImgModal() {
+let imgTarget = null;
+function openImgModal(target) {
   if (!active || !active.tab) { showToast("请先打开一个终端"); return; }
+  const pane = target && target.pane ? target.pane : active;
+  imgTarget = { pane, gen: pane.gen };
   imgStaged.forEach((s) => { try { URL.revokeObjectURL(s.url); } catch (e) {} });
   imgStaged = [];
   renderImgStaged();
   openLayer(document.getElementById("img-modal"), true);
   setTimeout(() => { try { document.getElementById("img-drop").focus(); } catch (e) {} }, 30);
 }
-function closeImgModal() {
-  closeLayer(document.getElementById("img-modal"), () => {
+function closeImgModal(returnToTerminal) {
+  const modal = document.getElementById("img-modal");
+  if (returnToTerminal === true) modal.__ccReturnFocus = active && active.term ? active.term.textarea : null;
+  closeLayer(modal, () => {
     imgStaged.forEach((s) => { try { URL.revokeObjectURL(s.url); } catch (e) {} });
     imgStaged = [];
     renderImgStaged();
@@ -1805,8 +2372,14 @@ function renderImgStaged() {
     : "支持 png / jpg / gif / webp,可一次多张";
 }
 async function sendStagedImages() {
-  if (!imgStaged.length || !active || !active.tab) return;
-  const cwd = active.tab.cwd || "";
+  const target = imgTarget;
+  const pane = target && target.pane;
+  if (!imgStaged.length) return;
+  if (!pane || !pane.tab || pane.gen !== target.gen || !pane.term) {
+    showToast("原终端已关闭,请选择终端后重新添加图片"); closeImgModal(); return;
+  }
+  if (!pane.ws || pane.ws.readyState !== 1) { showToast("终端未连接,图片已保留"); return; }
+  const cwd = pane.tab.cwd || "";
   if (!cwd) { showToast("此终端没有工作目录,无法存图"); return; }
   const btn = document.getElementById("img-send");
   setButtonBusy(btn, true);
@@ -1816,13 +2389,15 @@ async function sendStagedImages() {
     try { paths.push(await uploadOneImage(s.file, cwd)); }
     catch (e) { showToast("有图片上传失败 · " + e.message); }
   }
-  if (paths.length && active) {
-    sendInput(paths.join(" ") + " ");      // type the path(s) into the input box
-    showToast("已插入 " + paths.length + " 张图片路径,补一句话按回车即可");
+  if (paths.length && pane.gen === target.gen && pane.term) {
+    const text = paths.join(" ") + " ";
+    if (!pane.ws || pane.ws.readyState !== 1) { showToast("图片已上传,终端已断线,未插入路径"); }
+    else { sendInputTo(pane, text); showToast("已插入 " + paths.length + " 张图片路径"); }
+  } else if (paths.length) {
+    showToast("图片已上传,原终端已关闭,未插入路径");
   }
   setButtonBusy(btn, false);
-  closeImgModal();
-  try { active && active.term && active.term.focus(); } catch (e) {}
+  closeImgModal(true);
 }
 
 // wiring: toolbar button opens the modal
@@ -1886,8 +2461,8 @@ function renderPresence(s) {
     if (ip.trust === "blocked") tags.push('<span class="tag warn">已标记</span>');
     if (ip.clients > 1) tags.push('<span class="tag">' + ip.clients + " 个页面</span>");
     if (ip.terminals) tags.push('<span class="tag">' + ip.terminals + " 终端</span>");
-    // Some TCP tunnels hide the original address, so keep device labels visible
-    // to help distinguish connections that share a proxy IP.
+    // Through the frp TCP tunnel every public visitor shares one IP, so the
+    // device label is the only thing that separates them.
     const dev = (ip.devices || []).length ? '<span class="pp-dev">' + esc(ip.devices.join(" · ")) + "</span>" : "";
     const title = known ? '<span class="pp-name">' + esc(ip.name) + "</span>" : "";
     return '<div class="pp-row' + (known || ip.you ? "" : " other") + '" data-ip="' + esc(ip.ip) + '">' +
@@ -1976,12 +2551,15 @@ function currentTheme() {
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
   const tc = document.querySelector('meta[name="theme-color"]');
-  if (tc) tc.setAttribute("content", t === "dark" ? "#202020" : "#f5f5f5");
+  if (tc) tc.setAttribute("content", t === "dark" ? "#111417" : "#e8edf0");
   const btn = document.getElementById("theme-toggle");
   if (btn) btn.textContent = t === "dark" ? "◐ 浅色" : "◐ 深色";
+  setCommandIcon(btn, t === "dark" ? "Sun" : "Moon", t === "dark" ? "浅色" : "深色");
+  if (btn) btn.setAttribute("aria-label", t === "dark" ? "切换浅色主题" : "切换深色主题");
   panes.forEach((p) => {
-    if (p.term) p.term.options.theme = TERM_THEME[t];
+    if (p.term) p.term.options.theme = termTheme(t);
   });
+  window.ccAppearance?.sync(true);
 }
 function toggleTheme() {
   const t = currentTheme() === "dark" ? "light" : "dark";
@@ -1995,6 +2573,42 @@ window.addEventListener("storage", (event) => {
 });
 applyTheme(currentTheme());
 
+function showSessions(show) {
+  body.classList.toggle("sessions-open", show);
+  document.getElementById("nav-global").classList.toggle("selected", show);
+  document.getElementById("nav-current").classList.toggle("selected", !show);
+  document.getElementById("nav-global").setAttribute("aria-pressed", String(show));
+  document.getElementById("nav-current").setAttribute("aria-pressed", String(!show));
+}
+function toggleTools(force) {
+  const open = typeof force === "boolean" ? force : !body.classList.contains("tools-open");
+  body.classList.toggle("tools-open", open);
+  localStorage.setItem("cc_tools_hidden", open ? "0" : "1");
+  for (const id of ["btn-tools", "topbar-tools"]) {
+    const button = document.getElementById(id);
+    button.setAttribute("aria-expanded", String(open));
+    button.title = open ? "收起功能栏" : "展开功能栏";
+    button.setAttribute("aria-label", button.title);
+  }
+  requestAnimationFrame(refitAll);
+}
+document.getElementById("btn-tools").onclick = () => toggleTools();
+document.getElementById("topbar-tools").onclick = () => toggleTools();
+document.getElementById("header-new").onclick = openDirModal;
+document.getElementById("header-split").onclick = splitPane;
+document.getElementById("nav-global").onclick = () => showSessions(true);
+document.getElementById("nav-current").onclick = () => { showSessions(false); if (active && active.term) active.term.focus(); closeDrawer(); };
+document.getElementById("nav-files").onclick = () => { closeDrawer(); openFilesModal(); };
+document.getElementById("nav-resources").onclick = () => { closeDrawer(); openGpuModal(); };
+document.getElementById("nav-access").onclick = () => { closeDrawer(); openIpsModal(); };
+document.getElementById("nav-storage").onclick = () => { closeDrawer(); openGpuModal(); setResTab("disk"); };
+document.getElementById("btn-search").onclick = () => {
+  if (localStorage.getItem("cc_sb_hidden") === "1") setSidebarHidden(false);
+  showSessions(true); document.getElementById("session-search").focus();
+};
+document.getElementById("session-search").oninput = renderTabs;
+toggleTools(localStorage.getItem("cc_tools_hidden") !== "1");
+
 // ---- misc wiring -----------------------------------------------------------
 document.getElementById("set-token").onclick = setTokenPrompt;
 document.getElementById("refresh").onclick = async () => {
@@ -2006,6 +2620,19 @@ document.getElementById("refresh").onclick = async () => {
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { loadTabs(); heartbeat(); } });
 
 // ---- boot ------------------------------------------------------------------
+async function ensureCookieSession() {
+  const token = getToken();
+  if (!token) return;
+  try {
+    const r = await fetch("/api/login", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (r.ok) localStorage.removeItem("cc_token");
+  } catch (e) {}
+}
 async function loadConfig() {
   try { const c = await api("/api/config"); state.defaultDir = c.defaultDir || ""; state.types = c.types || {}; applyTypeAvail(); } catch (e) {}
 }
@@ -2167,7 +2794,7 @@ function updateSelectBtn() {
   const b = document.getElementById("btn-select");
   if (!b) return;
   b.classList.toggle("on", selectMode);
-  b.title = selectMode ? "选择模式:开(拖拽选中文字,滚轮仍可滚动)" : "选择模式:关(拖拽交给程序,如 claude 的点击)";
+  b.title = selectMode ? (COARSE ? "选择模式:开(长按后拖动选字,滑动仍可滚动)" : "选择模式:开(拖拽选中文字,滚轮仍可滚动)") : "选择模式:关(拖拽交给程序,如 claude 的点击)";
   b.setAttribute("aria-pressed", String(selectMode));
   document.querySelectorAll(".pane").forEach((el) => el.classList.toggle("selecting", selectMode));
 }
@@ -2179,38 +2806,36 @@ function toggleSelectMode() {
   if (active && active.term) { try { active.term.focus(); } catch (e) {} }
 }
 
-// xterm binds no touch events at all, so on a tablet a finger can never create
-// a selection — and the browser's own selection is no substitute, because the
-// DOM renderer rebuilds its row elements on every repaint and a native range
-// dies with them. So drive xterm's own selection API from touch directly.
-// Only while 选择模式 is on, otherwise normal scrolling/tapping must keep working.
-// The terminal has no scrollback of its own: everything runs through
-// `tmux attach`, so history lives in tmux (and mouse-reporting apps like claude
-// keep their own). Swiping did nothing because the ONLY route to either is the
-// wheel handler, and touch produces no wheel events. Rather than duplicate that
-// routing, turn a drag into synthetic wheel events and let the existing handler
-// decide — tmux copy-mode for plain shells, forwarded to the app for claude.
+// Single-finger swipes always scroll. Selection requires a stationary hold so
+// a saved selection preference cannot turn every phone swipe into text selection.
+const TOUCH_DRAG_PX = 8;
+const TOUCH_SELECT_MS = 400;
 function attachTouchScroll(term, host, pane) {
-  let lastY = null, acc = 0;
-  function rowHeight() {
-    const sc = host.querySelector(".xterm-screen");
-    const r = sc && sc.getBoundingClientRect();
-    return (r && r.height && term.rows) ? Math.max(4, r.height / term.rows) : 18;
-  }
+  let lastY = null, acc = 0, origin = null, dragging = false;
+  const reset = () => { lastY = null; acc = 0; origin = null; dragging = false; };
   const onStart = (ev) => {
-    lastY = (!selectMode && ev.touches.length === 1) ? ev.touches[0].clientY : null;
-    acc = 0;
+    reset();
+    if (ev.touches.length !== 1) return;
+    const touch = ev.touches[0];
+    lastY = touch.clientY;
+    origin = { x: touch.clientX, y: lastY };
   };
   const onMove = (ev) => {
-    if (selectMode || lastY == null || ev.touches.length !== 1) return;
-    // Claim the gesture on the FIRST move, not once a row's worth has piled up:
-    // by then iOS has already started its pull-to-refresh / rubber-band and a
-    // late preventDefault cannot call it back.
+    if (ev.touches.length !== 1) { reset(); return; }
+    if (!origin || lastY == null || (pane && pane.touchSelecting)) return;
+    const touch = ev.touches[0];
+    if (!dragging) {
+      const dx = Math.abs(touch.clientX - origin.x), dy = Math.abs(touch.clientY - origin.y);
+      if (dx >= TOUCH_DRAG_PX && dx > dy) { reset(); return; }
+      if (dy < TOUCH_DRAG_PX) return;
+      dragging = true;
+    }
     if (ev.cancelable) ev.preventDefault();
-    const y = ev.touches[0].clientY;
+    ev.stopPropagation();
+    const y = touch.clientY;
     acc += lastY - y;                 // finger up => positive => wheel down
     lastY = y;
-    const h = rowHeight();
+    const h = rowPx(term);
     // Emit whole LINES, not pixels: both consumers (our tmux copy-mode path and
     // xterm's own forwarding to mouse-reporting apps) take DOM_DELTA_LINE
     // literally, so the terminal scrolls exactly as far as the finger moved
@@ -2223,24 +2848,31 @@ function attachTouchScroll(term, host, pane) {
     const r = screen.getBoundingClientRect();
     screen.dispatchEvent(new WheelEvent("wheel", {
       deltaY: lines, deltaMode: 1, bubbles: true, cancelable: true,
-      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+      clientX: origin ? origin.x : r.left + r.width / 2, clientY: origin ? origin.y : r.top + r.height / 2,
     }));
   };
-  const onEnd = () => { lastY = null; acc = 0; };
-  host.addEventListener("touchstart", onStart, { passive: true });
-  host.addEventListener("touchmove", onMove, { passive: false });
-  host.addEventListener("touchend", onEnd, { passive: true });
-  host.addEventListener("touchcancel", onEnd, { passive: true });
+  const onEnd = (ev) => {
+    if (dragging && ev.cancelable) { ev.preventDefault(); ev.stopPropagation(); }
+    reset();
+  };
+  host.addEventListener("touchstart", onStart, { passive: true, capture: true });
+  host.addEventListener("touchmove", onMove, { passive: false, capture: true });
+  host.addEventListener("touchend", onEnd, { passive: false, capture: true });
+  host.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
   return () => {
-    host.removeEventListener("touchstart", onStart);
-    host.removeEventListener("touchmove", onMove);
-    host.removeEventListener("touchend", onEnd);
-    host.removeEventListener("touchcancel", onEnd);
+    host.removeEventListener("touchstart", onStart, true);
+    host.removeEventListener("touchmove", onMove, true);
+    host.removeEventListener("touchend", onEnd, true);
+    host.removeEventListener("touchcancel", onEnd, true);
   };
 }
 
 function attachTouchSelection(term, host, pane) {
-  let start = null;
+  let start = null, origin = null, timer = null;
+  const reset = () => {
+    clearTimeout(timer); timer = null; start = null; origin = null;
+    if (pane) pane.touchSelecting = false;
+  };
   function cellAt(t) {
     const screen = host.querySelector(".xterm-screen");
     if (!screen || !term.cols || !term.rows) return null;
@@ -2251,13 +2883,29 @@ function attachTouchSelection(term, host, pane) {
     return { col, row: term.buffer.active.viewportY + row };
   }
   const onStart = (ev) => {
-    start = (selectMode && ev.touches.length === 1) ? cellAt(ev.touches[0]) : null;
+    reset();
+    if (!selectMode || ev.touches.length !== 1) return;
+    origin = { clientX: ev.touches[0].clientX, clientY: ev.touches[0].clientY };
+    timer = setTimeout(() => {
+      if (!selectMode || !origin) return;
+      start = cellAt(origin);
+      if (start) {
+        if (pane) pane.touchSelecting = true;
+        try { term.select(start.col, start.row, 1); } catch (e) {}
+      }
+    }, TOUCH_SELECT_MS);
   };
   const onMove = (ev) => {
-    if (!selectMode || !start || ev.touches.length !== 1) return;
+    if (!selectMode || ev.touches.length !== 1) { reset(); return; }
+    if (!origin) return;
+    if (!start) {
+      if (Math.hypot(ev.touches[0].clientX - origin.clientX, ev.touches[0].clientY - origin.clientY) >= TOUCH_DRAG_PX) reset();
+      return;
+    }
     const now = cellAt(ev.touches[0]);
     if (!now) return;
     ev.preventDefault();                       // a selecting drag must not scroll
+    ev.stopPropagation();
     try {
       if (now.row === start.row) {
         const a = Math.min(start.col, now.col), b = Math.max(start.col, now.col);
@@ -2267,16 +2915,17 @@ function attachTouchSelection(term, host, pane) {
       }
     } catch (e) {}
   };
-  const onEnd = () => { start = null; };
-  host.addEventListener("touchstart", onStart, { passive: true });
-  host.addEventListener("touchmove", onMove, { passive: false });
-  host.addEventListener("touchend", onEnd, { passive: true });
-  host.addEventListener("touchcancel", onEnd, { passive: true });
+  const onEnd = (ev) => { if (start && ev.cancelable) ev.preventDefault(); reset(); };
+  host.addEventListener("touchstart", onStart, { passive: true, capture: true });
+  host.addEventListener("touchmove", onMove, { passive: false, capture: true });
+  host.addEventListener("touchend", onEnd, { passive: false, capture: true });
+  host.addEventListener("touchcancel", onEnd, { passive: true, capture: true });
   return () => {
-    host.removeEventListener("touchstart", onStart);
-    host.removeEventListener("touchmove", onMove);
-    host.removeEventListener("touchend", onEnd);
-    host.removeEventListener("touchcancel", onEnd);
+    reset();
+    host.removeEventListener("touchstart", onStart, true);
+    host.removeEventListener("touchmove", onMove, true);
+    host.removeEventListener("touchend", onEnd, true);
+    host.removeEventListener("touchcancel", onEnd, true);
   };
 }
 
@@ -2352,6 +3001,25 @@ function currentSelection() {
     return { text, pane: owner || active };
   }
   return null;
+}
+
+async function copyTerminalSelection(pane) {
+  ctrlArmed = false; updateCtrlCap();
+  const term = pane?.term;
+  if (!term) return;
+  let text = term.getSelection() || "";
+  if (!text) {
+    const selection = window.getSelection();
+    if (selection?.anchorNode && pane.el.contains(selection.anchorNode)) text = String(selection);
+  }
+  if (!text) { showToast("请先选中要复制的内容"); return; }
+  const focused = document.activeElement, ok = await copyText(text);
+  showToast(ok ? "已复制选中内容 (" + text.length + " 字)" : "复制失败,浏览器拒绝了剪贴板访问");
+  // The HTTP fallback briefly focuses a textarea. Do not steal focus back if
+  // the user switched panes or opened another field during an async copy.
+  if (active === pane && pane.term === term && focused === term.textarea && document.activeElement === document.body) {
+    try { term.focus(); } catch (_) {}
+  }
 }
 
 async function copyFromTerminal() {
@@ -2442,7 +3110,7 @@ async function loadGpu(force) {
   }
 }
 // ---- storage monitor -------------------------------------------------------
-// `df` is instant; `du` is not, so directory sizes
+// `df` is instant; `du` is not (1.8 TB at depth 1 is ~35s), so directory sizes
 // come from a backend background scan and this just polls until it lands.
 let resTab = "gpu";
 let diskHosts = [];
@@ -2766,6 +3434,7 @@ function renderFiles() {
   const box = document.getElementById("files-list");
   box.className = "files-list " + (filesView === "grid" ? "grid" : "list");
   document.getElementById("files-view").textContent = filesView === "grid" ? "▤ 列表" : "▦ 网格";
+  setCommandIcon("files-view", filesView === "grid" ? "List" : "LayoutGrid", filesView === "grid" ? "列表" : "网格");
 
   fvList = rows.filter((e) => e.type === "file");
   const note = document.getElementById("files-note");
@@ -2775,18 +3444,19 @@ function renderFiles() {
   if (!rows.length) { box.innerHTML = '<div class="pp-note">这里没有内容</div>'; return; }
   box.innerHTML = rows.map((e) => {
     const k = e.type === "dir" ? "dir" : kindOf(e.name);
+    const kindIcon = uiIcon({ dir: "Folder", image: "Image", video: "Film", audio: "Music2", pdf: "FileText", text: "FileCode2" }[k] || "File");
     if (filesView === "grid") {
       // No server-side thumbnails, so lazy-load and let CSS crop: only what is
       // actually scrolled into view ever gets fetched.
       const thumb = k === "image"
         ? '<img loading="lazy" decoding="async" src="' + fileUrl(e.path, 1) + '" alt="">'
-        : '<span class="fg-ic">' + (e.type === "dir" ? "▸" : KIND_ICON[k]) + "</span>";
+        : '<span class="fg-ic">' + (kindIcon || (e.type === "dir" ? "▸" : KIND_ICON[k])) + "</span>";
       return '<div class="fg-cell" data-path="' + esc(e.path) + '" data-type="' + e.type + '">' +
         '<div class="fg-thumb">' + thumb + "</div>" +
         '<div class="fg-name">' + esc(e.name) + "</div></div>";
     }
     return '<div class="fl-row" data-path="' + esc(e.path) + '" data-type="' + e.type + '">' +
-      '<span class="fl-ic">' + (e.type === "dir" ? "▸" : KIND_ICON[k]) + "</span>" +
+      '<span class="fl-ic">' + (kindIcon || (e.type === "dir" ? "▸" : KIND_ICON[k])) + "</span>" +
       '<span class="fl-name">' + esc(e.name) + "</span>" +
       '<span class="fl-size">' + (e.type === "dir" ? "" : fmtBytes(e.size)) + "</span>" +
       '<span class="fl-time">' + fmtTime(e.mtime) + "</span></div>";
@@ -2881,6 +3551,7 @@ document.addEventListener("keydown", (e) => {
 
 async function boot() {
   document.getElementById("size-val").textContent = getFont();
+  await ensureCookieSession();
   loadConfig();
   loadTabs();
   heartbeat();

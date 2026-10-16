@@ -32,6 +32,12 @@ class TmuxScrollIntegrationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
         self.until(lambda: "native history 200" in self.capture("cc_full"))
         self.until(lambda: "inline history 299" in self.capture("cc_inline"))
+        result = self.run_tmux([
+            "new-session", "-d", "-s", "cc_wrapped", "-x", "80", "-y", "14",
+            shlex.quote(str(binary)) + "; :",
+        ])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.until(lambda: "native history 200" in self.capture("cc_wrapped"))
 
     def run_tmux(self, args, **kwargs):
         return subprocess.run(["tmux", "-S", self.socket, "-f", "/dev/null", *args],
@@ -56,13 +62,25 @@ class TmuxScrollIntegrationTests(unittest.TestCase):
         self.run_tmux(["copy-mode", "-e", "-t", "cc_full"])
         self.assertEqual(self.state("cc_full", "#{pane_mode}"), "copy-mode")
         with patch.object(tmux_mgr, "_tmux", self.run_tmux):
-            self.assertTrue(tmux_mgr.scroll_session("cc_full", -7))
-            self.until(lambda: "native history 190" in self.capture("cc_full"))
+            state = tmux_mgr.ScrollState()
+            self.assertTrue(tmux_mgr.scroll_session("cc_full", -7, state))
+            self.until(lambda: "native history 194" in self.capture("cc_full"))
             self.assertEqual(self.state("cc_full", "#{pane_in_mode}"), "0")
-            self.assertTrue(tmux_mgr.scroll_session("cc_full", -7))
-            self.until(lambda: "native history 180" in self.capture("cc_full"))
-            self.assertTrue(tmux_mgr.scroll_session("cc_full", 7))
-            self.until(lambda: "native history 190" in self.capture("cc_full"))
+            self.assertTrue(tmux_mgr.scroll_session("cc_full", -7, state))
+            self.until(lambda: "native history 188" in self.capture("cc_full"))
+            self.assertTrue(tmux_mgr.scroll_session("cc_full", 7, state))
+            self.until(lambda: "native history 194" in self.capture("cc_full"))
+
+    def test_tiny_fullscreen_gestures_do_not_turn_into_pages(self):
+        state = tmux_mgr.ScrollState()
+        with patch.object(tmux_mgr, "_tmux", self.run_tmux):
+            for _ in range(2):
+                self.assertTrue(tmux_mgr.scroll_session("cc_full", -1, state))
+            self.assertIn("native history 200", self.capture("cc_full"))
+            self.assertTrue(tmux_mgr.scroll_session("cc_full", -1, state))
+            self.until(lambda: "native history 197" in self.capture("cc_full"))
+            self.assertTrue(tmux_mgr.scroll_session("cc_full", 3, state))
+            self.until(lambda: "native history 200" in self.capture("cc_full"))
 
     def test_inline_codex_keeps_real_tmux_scrollback(self):
         self.assertEqual(self.state("cc_inline", "#{alternate_on}"), "0")
@@ -71,6 +89,18 @@ class TmuxScrollIntegrationTests(unittest.TestCase):
             self.assertTrue(tmux_mgr.scroll_session("cc_inline", -7))
         self.assertEqual(self.state("cc_inline", "#{pane_mode}"), "copy-mode")
         self.assertEqual(self.state("cc_inline", "#{scroll_position}"), "7")
+
+    def test_shell_wrapper_and_small_pane_recover_native_history(self):
+        self.assertNotEqual(self.state("cc_wrapped", "#{pane_current_command}"), "codex")
+        tty = self.state("cc_wrapped", "#{pane_tty}")
+        self.assertTrue(tmux_mgr._foreground_is_codex(tty))
+        self.run_tmux(["copy-mode", "-e", "-t", "cc_wrapped"])
+        with patch.object(tmux_mgr, "_tmux", self.run_tmux):
+            self.assertTrue(tmux_mgr.scroll_session("cc_wrapped", -3, tmux_mgr.ScrollState()))
+            self.until(lambda: "native history 197" in self.capture("cc_wrapped"))
+            self.assertEqual(self.state("cc_wrapped", "#{pane_in_mode}"), "0")
+            self.assertTrue(tmux_mgr.scroll_session("cc_wrapped", 3, tmux_mgr.ScrollState()))
+            self.until(lambda: "native history 200" in self.capture("cc_wrapped"))
 
 
 if __name__ == "__main__":

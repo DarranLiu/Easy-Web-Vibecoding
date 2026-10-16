@@ -10,6 +10,7 @@ kills the session. Stopping a tab kills the session yet keeps the tab (grey,
 restartable); deleting a tab removes it for good.
 """
 import asyncio
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import hmac
@@ -18,9 +19,10 @@ import mimetypes
 import os
 import pty
 import secrets
-import shlex
+import uuid
 import shutil
 import signal
+import sqlite3
 import struct
 import termios
 import time
@@ -35,7 +37,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import codex_usage, config, disk, gpu, store, tmux_mgr
+from backend import terminal_launch
+from backend import agent_sessions, terminal_restart, agent_updates
 from backend import known_ips
+from backend import workspaces, workspace_tools, agent_activity
 from backend import presence as presence_store
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -43,7 +48,6 @@ FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 app = FastAPI(title="Web CC Terminal")
 AUTH_COOKIE = "cc_web_token"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30
-
 
 @app.middleware("http")
 async def privacy_headers(request: Request, call_next):
@@ -54,6 +58,31 @@ async def privacy_headers(request: Request, call_next):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+async def _track_existing_conversations():
+    while True:
+        try:
+            await asyncio.to_thread(terminal_restart.snapshot_existing)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        await asyncio.sleep(2)
+
+
+@app.on_event("startup")
+async def start_conversation_tracking():
+    app.state.conversation_tracker = asyncio.create_task(_track_existing_conversations())
+
+
+@app.on_event("shutdown")
+async def stop_conversation_tracking():
+    task = getattr(app.state, "conversation_tracker", None)
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 # --- Auth -------------------------------------------------------------------
@@ -475,7 +504,11 @@ def _serialize(live: dict):
     out = []
     for t in tabs:
         alive = t["id"] in live
-        out.append({**t, "alive": alive, "attached": live[t["id"]]["attached"] if alive else 0})
+        record = agent_sessions.load(t["id"])
+        out.append({**t, "alive": alive, "attached": live[t["id"]]["attached"] if alive else 0,
+                    "resumeAgent": record.get("agent") if record.get("agent") in terminal_launch.AGENTS else None,
+                    "codexScrollback": bool(alive and live[t["id"]].get("codexScrollback", False)),
+                    "activity": agent_activity.status(t["id"], alive, record)})
     out.sort(key=lambda x: x.get("created", ""), reverse=True)
     return out
 
@@ -485,6 +518,141 @@ def list_sessions(_=Depends(require_auth)):
     live = {s["id"]: s for s in tmux_mgr.list_sessions()}
     _adopt_orphans(live)
     return {"sessions": _serialize(live), "groups": store.get_groups(), "manualGroups": store.get_manual_groups()}
+
+
+@contextmanager
+def _workspace_errors():
+    try:
+        yield
+    except workspaces.WorkspaceError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+    except (OSError, ValueError, sqlite3.Error) as exc:
+        raise HTTPException(status_code=503, detail="Workspace operation unavailable") from exc
+
+
+async def _workspace_body(request):
+    try:
+        body = await request.json()
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, "Invalid JSON request") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Request must be a JSON object")
+    return body
+
+
+@app.get("/api/workspaces")
+def workspace_list(_=Depends(require_auth)):
+    with _workspace_errors():
+        return {"workspaces": workspaces.listing(store.list_tabs())}
+
+
+@app.post("/api/workspaces")
+async def workspace_create(request: Request, _=Depends(require_auth)):
+    body = await _workspace_body(request)
+    path = body.get("cwd") or config.DEFAULT_DIR
+    if not isinstance(path, str):
+        raise HTTPException(400, "Invalid workspace directory")
+    cwd = safe_resolve(path)
+    if not cwd.is_dir():
+        raise HTTPException(400, "Workspace directory does not exist")
+    members = body.get("members", [])
+    with _workspace_errors():
+        known = {t["id"] for t in store.list_tabs()}
+        if not isinstance(members, list) or any(not isinstance(sid, str) or sid not in known for sid in members):
+            raise workspaces.WorkspaceError("A selected terminal no longer exists", 409)
+        return workspaces.create(body.get("name"), str(cwd), members)
+
+
+@app.patch("/api/workspaces/{wid}")
+async def workspace_update(wid: str, request: Request, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.update(wid, await _workspace_body(request), {t["id"] for t in store.list_tabs()})
+
+
+@app.delete("/api/workspaces/{wid}")
+def workspace_delete(wid: str, revision: int, _=Depends(require_auth)):
+    with _workspace_errors():
+        workspaces.delete(wid, revision)
+        return {"ok": True}
+
+
+@app.get("/api/workspaces/{wid}/layout/{device}")
+def workspace_layout(wid: str, device: str, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.layout(wid, device)
+
+
+@app.put("/api/workspaces/{wid}/layout/{device}")
+async def workspace_save_layout(wid: str, device: str, request: Request, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.layout(wid, device, await _workspace_body(request))
+
+
+@app.get("/api/fleet")
+def workspace_fleet(_=Depends(require_auth)):
+    with _workspace_errors():
+        tabs = _serialize({s["id"]: s for s in tmux_mgr.list_sessions()})
+        statuses = {t["id"]: t["activity"] for t in tabs}
+        return {"sessions": tabs, "events": workspaces.record_events(statuses)}
+
+
+@app.get("/api/layouts/{device}")
+def device_layout(device: str, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.device_layout(device)
+
+
+@app.put("/api/layouts/{device}")
+async def save_device_layout(device: str, request: Request, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.device_layout(device, await _workspace_body(request), {t["id"] for t in store.list_tabs()})
+
+
+@app.post("/api/fleet/ack")
+async def workspace_ack(request: Request, _=Depends(require_auth)):
+    with _workspace_errors():
+        workspaces.acknowledge((await _workspace_body(request)).get("ids"))
+        return {"ok": True}
+
+
+@app.get("/api/fs/edit")
+def fs_edit(path: str, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspace_tools.read_text(safe_resolve(path))
+
+
+@app.put("/api/fs/edit")
+async def fs_save(request: Request, _=Depends(require_auth)):
+    body = await _workspace_body(request)
+    if not isinstance(body.get("path"), str) or not body["path"]:
+        raise HTTPException(400, "File path is required")
+    with _workspace_errors():
+        return workspace_tools.write_text(safe_resolve(body.get("path", "")), body)
+
+
+@app.get("/api/git/status")
+def git_status(path: str, _=Depends(require_auth)):
+    with _workspace_errors():
+        value = workspace_tools.git_status(safe_resolve(path))
+        safe_resolve(value["root"])
+        return value
+
+
+@app.get("/api/git/diff")
+def git_diff(path: str, file: str, staged: bool = False, _=Depends(require_auth)):
+    with _workspace_errors():
+        directory = safe_resolve(path)
+        root, _ = workspace_tools.command([*workspace_tools.git_args(directory), "rev-parse", "--show-toplevel"], limit=8192)
+        safe_resolve(os.fsdecode(root).strip())
+        return workspace_tools.git_diff(directory, file, staged)
+
+
+@app.get("/api/sessions/{sid}/history")
+def terminal_history(sid: str, q: str, _=Depends(require_auth)):
+    if not store.get_tab(sid):
+        raise HTTPException(404, "Terminal not found")
+    with _workspace_errors():
+        return workspace_tools.history(tmux_mgr.session_name(sid), q)
 
 
 @app.post("/api/groups")
@@ -528,26 +696,20 @@ async def assign_group(sid: str, request: Request, _=Depends(require_auth)):
 
 
 def _launch_cmd(ttype: str, mode: str) -> str:
+    setup = terminal_launch.shell_setup()
     if ttype == "shell":
-        return ""  # plain shell — send nothing
+        return setup
     if ttype == "codex":
-        args = [config.CODEX_BIN]
-        if config.CODEX_MODEL_CATALOG:
-            catalog_value = json.dumps(config.CODEX_MODEL_CATALOG)
-            args.extend(["-c", f"model_catalog_json={catalog_value}"])
-        if config.CODEX_STATUS_LINE:
-            status_value = json.dumps(config.CODEX_STATUS_LINE, separators=(",", ":"))
-            args.extend(["-c", f"tui.status_line={status_value}"])
-        return shlex.join(args)
+        return setup + "; _cc_web_codex"
     if ttype == "opencode":
-        return config.OPENCODE_BIN
+        return setup + "; _cc_web_opencode --port 0 --hostname 127.0.0.1"
     if ttype == "claude":
         modes = {
-            "new": config.CLAUDE_BIN,
-            "continue": config.CLAUDE_BIN + " --continue",
-            "resume": config.CLAUDE_BIN + " --resume",
+            "new": "_cc_web_claude",
+            "continue": "_cc_web_claude --continue",
+            "resume": "_cc_web_claude --resume",
         }
-        return modes.get(mode, config.CLAUDE_BIN)
+        return setup + "; " + modes.get(mode, "_cc_web_claude")
     raise ValueError(f"不支持的终端类型: {ttype}")
 
 
@@ -572,47 +734,80 @@ async def create_session(request: Request, _=Depends(require_auth)):
         raise HTTPException(status_code=400, detail="目标不是一个目录")
     sid = tmux_mgr.gen_id()
     try:
-        tmux_mgr.start_session(sid, str(p), _launch_cmd(ttype, mode), {"type": ttype, "mode": mode})
+        tmux_mgr.start_session(sid, str(p), _launch_cmd(ttype, mode), {
+            "type": ttype, "mode": mode, "web_scrollback": int(ttype == "codex" and config.CODEX_SCROLLBACK),
+        })
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     tab = {"id": sid, "cwd": str(p), "type": ttype, "mode": mode, "created": _now(), "title": _title(str(p))}
     store.add_tab(tab)
-    return {**tab, "alive": True, "attached": 0}
+    return {**tab, "alive": True, "attached": 0, "codexScrollback": ttype == "codex" and config.CODEX_SCROLLBACK}
 
 
 @app.post("/api/sessions/{sid}/stop")
 def stop_session(sid: str, _=Depends(require_auth)):
     if not store.get_tab(sid):
         raise HTTPException(status_code=404, detail="没有这个标签")
-    tmux_mgr.kill_session(tmux_mgr.session_name(sid))  # ok if already gone
+    with _terminal_operation(sid):
+        record = agent_sessions.load(sid)
+        if record.get("agent") == "codex" and agent_sessions.same_process(record):
+            agent_sessions.refresh_codex(sid, record)
+        elif record.get("agent") == "opencode" and agent_sessions.same_process(record):
+            from backend import opencode_sessions
+            opencode_sessions.refresh(sid, record)
+        tmux_mgr.kill_session(tmux_mgr.session_name(sid))  # ok if already gone
     return {"ok": True, "alive": False}
 
 
 @app.post("/api/sessions/{sid}/start")
 def start_session(sid: str, _=Depends(require_auth)):
+    with _terminal_operation(sid):
+        return _start_session(sid)
+
+
+@contextmanager
+def _terminal_operation(sid):
+    try:
+        with agent_sessions.lock(sid, "operation", blocking=False):
+            yield
+    except BlockingIOError:
+        raise HTTPException(status_code=409, detail="此终端正在执行其他管理操作")
+
+
+def _start_session(sid):
     tab = store.get_tab(sid)
     if not tab:
         raise HTTPException(status_code=404, detail="没有这个标签")
     if not tmux_mgr.session_exists(tmux_mgr.session_name(sid)):
-        p = safe_resolve(tab["cwd"])
-        if not p.is_dir():
+        if (tab.get("type") in terminal_launch.AGENTS
+                or agent_sessions.recover_saved(sid).get("agent") in terminal_launch.AGENTS):
+            try:
+                preview = terminal_restart._inspect(sid, tab)
+                if not preview.get("ready"):
+                    raise terminal_restart.RestartError(preview["reason"])
+                return terminal_restart.restart_locked(sid, tab, {
+                    "requestId": str(uuid.uuid4()), "expected": preview["expected"], "confirmed": True,
+                })
+            except terminal_restart.RestartError as exc:
+                raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        if not Path(tab["cwd"]).is_dir():
             raise HTTPException(status_code=400, detail="原目录已不存在，无法重启")
         ttype = tab.get("type", "claude")
         if ttype == "claude":
-            cmd, mode = config.CLAUDE_BIN + " --continue", "continue"  # resume conversation
-        elif ttype == "codex":
-            cmd, mode = _launch_cmd("codex", tab.get("mode", "new")), tab.get("mode", "new")
-        elif ttype == "opencode":
-            cmd, mode = config.OPENCODE_BIN, tab.get("mode", "new")
+            mode = "continue"
         else:
-            cmd, mode = "", "new"  # plain shell
+            mode = tab.get("mode", "new")
+        cmd = _launch_cmd(ttype, mode)
         try:
-            tmux_mgr.start_session(sid, str(p), cmd, {"type": ttype, "mode": mode})
+            tmux_mgr.start_session(sid, tab["cwd"], cmd, {
+                "type": ttype, "mode": mode, "web_scrollback": int(ttype == "codex" and config.CODEX_SCROLLBACK),
+            })
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
         store.update_tab(sid, mode=mode)
     tab = store.get_tab(sid)
-    return {**tab, "alive": True, "attached": 0}
+    scrollback = next((s.get("codexScrollback", False) for s in tmux_mgr.list_sessions() if s["id"] == sid), False)
+    return {**tab, "alive": True, "attached": 0, "codexScrollback": scrollback}
 
 
 @app.post("/api/sessions/{sid}/rename")
@@ -625,19 +820,109 @@ async def rename_tab(sid: str, request: Request, _=Depends(require_auth)):
     return {"ok": True, "name": name}
 
 
+@app.get("/api/sessions/{sid}/restart")
+def inspect_restart(sid: str, _=Depends(require_auth)):
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(status_code=404, detail="没有这个标签")
+    try:
+        return terminal_restart.inspect(sid, tab)
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/sessions/{sid}/restart/bind")
+async def bind_restart(sid: str, request: Request, _=Depends(require_auth)):
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(status_code=404, detail="没有这个标签")
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求内容无效")
+    try:
+        with agent_sessions.lock(sid, "operation", blocking=False):
+            return await asyncio.to_thread(terminal_restart.bind, sid, tab, body.get("sessionId"))
+    except BlockingIOError:
+        raise HTTPException(status_code=409, detail="此终端正在执行其他操作")
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/sessions/{sid}/restart")
+async def restart_session(sid: str, request: Request, _=Depends(require_auth)):
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(status_code=404, detail="没有这个标签")
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求内容无效")
+    try:
+        return await asyncio.to_thread(terminal_restart.restart, sid, tab, body)
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.get("/api/agents/versions")
+def agent_versions(sid: str = "", _=Depends(require_auth)):
+    if sid and (not agent_sessions.SID_RE.fullmatch(sid) or not store.get_tab(sid)):
+        raise HTTPException(status_code=404, detail="没有这个终端")
+    try:
+        return agent_updates.overview(sid or None)
+    except agent_updates.UpdateError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/versions/check")
+async def check_agent_versions(request: Request, _=Depends(require_auth)):
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="检测请求无效")
+    sid = body.get("sid")
+    if sid is not None and (not isinstance(sid, str) or not agent_sessions.SID_RE.fullmatch(sid) or not store.get_tab(sid)):
+        raise HTTPException(status_code=404, detail="没有这个终端")
+    try:
+        return await asyncio.to_thread(agent_updates.overview, sid, True)
+    except agent_updates.UpdateError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.get("/api/agents/{agent}/update")
+def get_agent_update(agent: str, _=Depends(require_auth)):
+    try:
+        agent_updates._agent(agent)
+        return agent_updates.public_job(agent_updates._job(agent))
+    except agent_updates.UpdateError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/{agent}/update", status_code=202)
+async def update_agent(agent: str, request: Request, _=Depends(require_auth)):
+    try:
+        return await asyncio.to_thread(agent_updates.start_update, agent, await request.json())
+    except (agent_updates.UpdateError, terminal_restart.RestartError) as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.post("/api/agents/{agent}/rollback")
+async def rollback_agent(agent: str, request: Request, _=Depends(require_auth)):
+    try:
+        return await asyncio.to_thread(agent_updates.rollback, agent, await request.json())
+    except (agent_updates.UpdateError, OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=getattr(exc, "status", 409), detail="回退未完成，请重新检测安装版本") from exc
+
+
 @app.delete("/api/sessions/{sid}")
 def delete_session(sid: str, _=Depends(require_auth)):
-    name = tmux_mgr.session_name(sid)
-    if tmux_mgr.session_exists(name):
-        tmux_mgr.kill_session(name)
-    store.remove_tab(sid)
+    with _terminal_operation(sid):
+        name = tmux_mgr.session_name(sid)
+        if tmux_mgr.session_exists(name):
+            tmux_mgr.kill_session(name)
+        store.remove_tab(sid)
     return {"ok": True}
 
 
 # --- Presence (who is connected — leak monitoring) --------------------------
-# State lives in presence.py's shared file, not in this process. Deployments may
-# expose multiple uvicorn workers or entry points, so an in-memory dictionary
-# would give each process a different view of connected clients.
+# Presence is shared across workers and authenticated entry points.
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 
 
@@ -764,9 +1049,14 @@ async def ws_term(websocket: WebSocket, sid: str):
     os.set_blocking(master_fd, False)
 
     loop = asyncio.get_running_loop()
-    out_queue: asyncio.Queue = asyncio.Queue()
+    # Pause the attachment reader instead of accumulating unbounded output for
+    # slow networks. The native tmux session is never stopped or recreated.
+    out_queue: asyncio.Queue = asyncio.Queue(maxsize=16)
+    reading = True
+    ended = False
 
     def on_readable():
+        nonlocal reading, ended
         try:
             data = os.read(master_fd, 65536)
         except (BlockingIOError, InterruptedError):
@@ -774,13 +1064,21 @@ async def ws_term(websocket: WebSocket, sid: str):
         except OSError:
             data = b""
         out_queue.put_nowait(data if data else None)
+        if not data or out_queue.full():
+            ended = not data
+            loop.remove_reader(master_fd)
+            reading = False
 
     loop.add_reader(master_fd, on_readable)
 
     async def pump_out():
+        nonlocal reading
         try:
             while True:
                 data = await out_queue.get()
+                if not reading and not ended:
+                    loop.add_reader(master_fd, on_readable)
+                    reading = True
                 if data is None:
                     break
                 await websocket.send_bytes(data)
@@ -795,12 +1093,16 @@ async def ws_term(websocket: WebSocket, sid: str):
     sender = asyncio.create_task(pump_out())
 
     scrolled = False  # a successful scroll may have entered tmux copy-mode
+    scroll_state = tmux_mgr.ScrollState()
     try:
         while True:
             msg = await websocket.receive_text()
             obj = json.loads(msg)
             t = obj.get("type")
+            if t in {"input", "scroll"} and terminal_restart.is_mutating(sid):
+                continue
             if t == "input":
+                scroll_state.reset()
                 # If the user scrolled into copy-mode, typing should snap back to
                 # the live prompt instead of being eaten as copy-mode navigation.
                 if scrolled:
@@ -808,9 +1110,11 @@ async def ws_term(websocket: WebSocket, sid: str):
                     scrolled = False
                 os.write(master_fd, obj.get("data", "").encode())
             elif t == "resize":
-                _set_winsize(master_fd, int(obj.get("rows", 24)), int(obj.get("cols", 80)))
+                scroll_state.reset()
+                _set_winsize(master_fd, max(2, min(300, int(obj.get("rows", 24)))),
+                             max(8, min(500, int(obj.get("cols", 80)))))
             elif t == "scroll":
-                if tmux_mgr.scroll_session(name, int(obj.get("lines", 0))):
+                if tmux_mgr.scroll_session(name, int(obj.get("lines", 0)), scroll_state, obj.get("row", 2)):
                     scrolled = True
     except WebSocketDisconnect:
         pass
@@ -820,6 +1124,10 @@ async def ws_term(websocket: WebSocket, sid: str):
         presence_store.drop_ws(conn_id)
         loop.remove_reader(master_fd)
         sender.cancel()
+        try:
+            await sender
+        except asyncio.CancelledError:
+            pass
         try:
             os.close(master_fd)
         except OSError:

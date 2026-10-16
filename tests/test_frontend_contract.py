@@ -20,7 +20,7 @@ class FrontendContractTests(unittest.TestCase):
 
     def test_stop_action_requires_confirmation(self):
         self.assertIn("requestStop", APP_JS)
-        stop_handler = re.search(r"btn-stop.*?onclick\s*=\s*\(\)\s*=>\s*\{(?P<body>.*?)\};", APP_JS, re.S)
+        stop_handler = re.search(r'document\.getElementById\("btn-stop"\)\.onclick\s*=\s*\(\)\s*=>\s*\{(?P<body>.*?)\};', APP_JS, re.S)
         self.assertIsNotNone(stop_handler)
         self.assertIn("requestStop", stop_handler.group("body"))
 
@@ -44,13 +44,16 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('"SF Pro Display"', STYLE_CSS)
         self.assertIn('"PingFang SC"', STYLE_CSS)
         self.assertRegex(STYLE_CSS, r"body\s*\{[^}]*font-size:\s*12\.5px")
-        self.assertIn("n = mqMobile.matches ? 11 : 12", APP_JS)
+        self.assertIn("n = mqMobile.matches ? 11 : 13", APP_JS)
 
     def test_terminal_wheel_scrolls_terminal_history_not_app_mouse_history(self):
         self.assertIn("attachTerminalWheelHandler", APP_JS)
         self.assertIn("attachCustomWheelEventHandler", APP_JS)
         self.assertIn('type: "scroll"', APP_JS)
-        self.assertIn("tmux copy-mode", APP_JS)
+        self.assertIn("appWantsMouse(term", APP_JS)
+        self.assertIn("wheelToLines(ev, term)", APP_JS)
+        self.assertIn("remainder += delta", APP_JS)
+        self.assertNotIn('term.scrollLines(', APP_JS)
 
 
 if __name__ == "__main__":

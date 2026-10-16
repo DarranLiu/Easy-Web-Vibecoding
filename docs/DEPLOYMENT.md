@@ -32,6 +32,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now easy-web-vibecoding.service
 ```
 
+示例新增 `KillMode=process`：重启 Web 服务时，不应连带终止最初由该服务启动的 tmux。已有部署升级前请核对这个设置。它会有意保留分离的任务，任务需在终端界面中明确管理。
+
 示例环境文件：
 
 ```bash
@@ -67,6 +69,7 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_OPENCODE` | OpenCode 可执行文件。 |
 | `CC_WEB_CODEX_MODEL_CATALOG` | Codex 模型目录 JSON；空字符串关闭覆盖。 |
 | `CC_WEB_CODEX_STATUS_LINE` | Codex 原生底栏项目，逗号分隔。 |
+| `CC_WEB_CODEX_SCROLLBACK` | 默认 `1`，新建 Codex 使用内联历史；设为 `0` 可选择原生全屏模式。 |
 | `CC_WEB_DISK_ROOTS` | 允许资源面板执行 `du` 的根目录，逗号分隔。 |
 
 ### 状态文件
@@ -82,10 +85,16 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_DISK_CACHE` | 磁盘扫描缓存。 |
 | `CC_WEB_PRESENCE` | 当前在线状态。 |
 | `CC_WEB_KNOWN_IPS` | 已见过的来源 IP。 |
+| `CC_WEB_AGENT_RUNTIME_DIR` | 原会话绑定及私有恢复计划；默认 `~/.cache/cc-web-terminal/sessions`。 |
+| `CC_WEB_AGENT_UPDATE_DIR` | 更新状态、暂存版本及回退记录；默认 `~/.cache/cc-web-terminal/updates`。 |
+| `CC_WEB_TERMINAL_LAUNCHER_DIR` | 仅属主可访问的网页启动保护入口；默认 `~/.cache/cc-web-terminal/bin`。 |
+| `CC_WEB_WORKSPACE_DB` | 工作区、设备布局和活动元数据的 SQLite 文件；默认 `~/.cache/cc-web-workspaces/state.sqlite3`。 |
 
 状态文件可能包含目录、主机名和来源 IP，不应提交到 Git。程序会强制使用 `0600`；从旧版本升级后，下一次写入也会收紧已有文件权限。
 
 浏览器端不会保存 Token，但会在 `localStorage` 中保留主题、布局、终端 ID 和最近打开的文件目录，方便恢复界面。共享电脑上使用独立浏览器用户配置，并在不再使用时清理该站点数据。
+
+会话绑定可能包含恢复工具所需的启动配置；活动记录只保存状态元数据，不保存提问或终端输出。它们都属于私有数据，不要把这些路径指向准备公开的仓库。使用共享安装更新前请阅读 [更新与恢复说明](UPDATES.md)。
 
 `run.sh` 和 systemd 示例默认使用 `--no-access-log`。文件浏览、预览和磁盘下钻的 URL 查询参数可能包含绝对路径；如果在 Caddy、Nginx 或其它入口启用访问日志，请配置为不记录查询参数，或只记录路由和状态码。
 

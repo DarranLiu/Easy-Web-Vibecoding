@@ -18,6 +18,10 @@ caddy
 .cc-web-images/
 .cc-web-*.json
 .cc-web-token
+backups/
+*.sqlite3
+*.sqlite3-*
+*.lock
 screenshots-local/
 
 .DS_Store

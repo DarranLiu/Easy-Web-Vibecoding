@@ -106,7 +106,7 @@ Write the first comment personally. Explain why you built it, the specific tmux/
 
 - Why a browser disconnect must not kill a coding-agent process.
 - Making one mouse wheel work for tmux history and full-screen terminal apps.
-- Browser terminal clipboard design that preserves `Ctrl+C`.
+- Making `Ctrl+C` copy-only in a browser terminal, with a separate confirmed interrupt action.
 - Fixing missing terminal glyphs on unmanaged Windows machines.
 - Pasting screenshots into CLI agents without a proprietary upload API.
 - Polling Codex usage without waking every hidden terminal.

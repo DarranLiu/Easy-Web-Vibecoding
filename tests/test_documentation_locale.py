@@ -3,6 +3,12 @@ from pathlib import Path
 
 
 SCREENSHOTS = (
+    "workspace.png",
+    "updates.png",
+    "restart.png",
+    "workspace-files.png",
+    "mobile-recent.png",
+    "mobile-commands.png",
     "codex-usage.png",
     "connections.png",
     "copy-text.png",

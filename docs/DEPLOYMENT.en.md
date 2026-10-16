@@ -34,6 +34,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now easy-web-vibecoding.service
 ```
 
+The example sets `KillMode=process`: restarting the web service must not kill a tmux server that was originally launched by that service. Review this setting in an existing deployment before upgrading. It deliberately leaves detached jobs running; manage those explicitly in the terminal UI.
+
 Example environment file:
 
 ```bash
@@ -69,6 +71,7 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_OPENCODE` | Path to the OpenCode executable. |
 | `CC_WEB_CODEX_MODEL_CATALOG` | Codex model catalog JSON; an empty string disables the override. |
 | `CC_WEB_CODEX_STATUS_LINE` | Comma-separated items for the native Codex status line. |
+| `CC_WEB_CODEX_SCROLLBACK` | `1` (default) uses inline history for new Codex launches; `0` opts into the native fullscreen UI. |
 | `CC_WEB_DISK_ROOTS` | Comma-separated roots that the resource panel may scan with `du`. |
 
 ### State files
@@ -84,10 +87,16 @@ These variables normally do not need to change. Their defaults are files under t
 | `CC_WEB_DISK_CACHE` | Disk scan cache. |
 | `CC_WEB_PRESENCE` | Current presence state. |
 | `CC_WEB_KNOWN_IPS` | Previously seen source IPs. |
+| `CC_WEB_AGENT_RUNTIME_DIR` | Exact-session bindings and private restart plans; defaults to `~/.cache/cc-web-terminal/sessions`. |
+| `CC_WEB_AGENT_UPDATE_DIR` | Update state, staged releases and rollback records; defaults to `~/.cache/cc-web-terminal/updates`. |
+| `CC_WEB_TERMINAL_LAUNCHER_DIR` | Owner-only web launch guards; defaults to `~/.cache/cc-web-terminal/bin`. |
+| `CC_WEB_WORKSPACE_DB` | SQLite workspace, device layout and activity metadata; defaults to `~/.cache/cc-web-workspaces/state.sqlite3`. |
 
 State files may contain directories, hostnames, and source IP addresses. They must not enter Git. The application enforces mode `0600`; the next write after upgrading also tightens permissions on older files.
 
 The browser does not store the login token. It does keep the theme, layout, terminal IDs, and recent file directories in `localStorage` so the workspace can recover. Use a separate browser profile on shared machines and clear the site's data when access is no longer needed.
+
+Session bindings may include launch configuration needed to recover the original tool. Activity records contain status metadata, not prompts or terminal output. Treat all of these as private regardless, and do not point the state paths into a checkout you plan to publish. See [updates and recovery](UPDATES.en.md) before using shared-install updates.
 
 `run.sh` and the systemd example use `--no-access-log` by default. File browsing, preview, and disk drill-down query strings can include absolute paths. If Caddy, Nginx, or another edge service logs requests, remove query strings or record only the route and status.
 

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/desktop-split.png" alt="Easy Web Vibecoding 双终端工作区">
+  <img src="docs/images/workspace.png" alt="Easy Web Vibecoding 三终端独立分屏工作区">
 </p>
 
 <h1 align="center">Easy Web Vibecoding</h1>
@@ -20,12 +20,14 @@
 </p>
 
 <p align="center">
-  <strong>4</strong> 种终端 · <strong>4</strong> 格分屏 · tmux 持久会话 · 文件与资源管理 · 桌面与移动端
+  <strong>4</strong> 种终端 · <strong>4</strong> 格分屏 · 热更新 · 一键恢复原会话 · 桌面与移动端
 </p>
 
 Easy Web Vibecoding 的界面叫 **CC Terminal**。它不是新的模型服务，也不转发模型 API。它做的事情很直接：把服务器上已经能运行的命令行工具，通过 `tmux + FastAPI + xterm.js` 接到浏览器。
 
 浏览器关掉、网络断开或 Web 后端重启，真正的任务仍留在 tmux 中。再次打开页面，就能继续看、继续输入。
+
+**v0.2.0 新增：** 一键检测 CLI 版本、热更新共享安装、一键重启并恢复**原来的对话**。新版左侧工作区可以直接展开子窗口，切换与跨项目分屏不用挤在顶部标签栏。
 
 > [!NOTE]
 > 下面所有画面都来自项目真实前端和真实浏览器渲染。会话、目录、IP、文件和资源数据均为匿名演示内容，不对应任何真实服务器。
@@ -53,6 +55,27 @@ http://127.0.0.1:8000
 
 完整部署方式见 [部署与配置](docs/DEPLOYMENT.md)。
 
+## 新增 · 热更新与一键恢复原有交互终端
+
+点顶部包裹图标打开“版本与更新”，同时看到**当前窗口、共享安装、官方最新**三个版本。网页与同一系统用户的 SSH 终端共用安装，不再各用一套旧程序。
+
+| 操作 | 实际会发生什么 |
+| --- | --- |
+| 检测最新版本 | 查询官方发布信息，不安装、不重启。 |
+| 仅更新 | 校验并切换共享安装；现有窗口继续运行原进程，之后新开的网页和 SSH 终端使用新版。 |
+| 更新并恢复 | 安装新版，再只重启选中的窗口，校验原对话是否真正加载。 |
+| 重启并恢复 | 不安装更新，直接重启所选程序并回到已记录的原会话。 |
+| 回退安装 | 有可用备份时回到上一个安装版本；不会回滚聊天数据。 |
+
+![版本检测、热更新与恢复入口](docs/images/updates.png)
+
+支持 **Codex、Claude Code、OpenCode**，也支持在网页 Shell 中以受支持方式启动的程序。恢复前会确认原会话 ID、程序、启动参数和目标进程；不能可靠识别时，会阻止重启或要求绑定确切的原会话，不会用“最近一条”碰运气。
+
+![确认重启并恢复确切的原对话](docs/images/restart.png)
+
+> [!IMPORTANT]
+> 热更新指**替换安装而不停掉正在运行的进程**，不是让旧进程原地变成新版。重启可能打断当前任务、丢失未发送输入；恢复聊天记录不等于恢复正在执行的命令，也不能恢复服务器重启前的内存。其它终端不会一起重启。具体边界与升级步骤见 [更新与恢复说明](docs/UPDATES.md)。
+
 ## 01 · 从目录启动任何一种终端
 
 点“新终端”，选项目目录，再选择 Claude 新对话、继续会话、Codex、OpenCode 或普通 Shell。没有安装的工具不会显示成一个点了才报错的假入口。
@@ -61,13 +84,13 @@ http://127.0.0.1:8000
 
 ## 02 · 一个页面同时盯住多个任务
 
-每个标签背后都是独立 tmux session。工作区最多放四格，可以左右、上下或自动排列；分隔线可拖动，终端位置也能交换。切换标签只是在换视图，不会终止任务。
+每个终端背后都是独立 tmux session。点左侧工作区展开子窗口，单击聚焦，点子窗口的分屏图标直接加入分屏，也能跨项目选择。切换工作区只改变导航，不改变屏幕上已经打开的终端。最多四格，支持拖动分隔线和交换位置；手机与电脑分别保存布局。
 
 ![双终端分屏](docs/images/desktop-split.png)
 
-## 03 · 复制文字，也保留终端该有的 Ctrl+C
+## 03 · Ctrl+C 只复制，中断单独确认
 
-终端里选中文字后，可以点顶部复制按钮，Windows / Linux 也可用 `Ctrl+Shift+C`，macOS / iPad 可用 `Cmd+C`。普通 `Ctrl+C` 仍然发送中断信号，不会被网页抢走。
+网页终端里的 `Ctrl+C`、`Ctrl+Shift+C`、Mac `Cmd+C` 现在**只复制选中文字**。没有选区或复制失败，也不会意外中断 Codex、CC 或 Shell。需要取消当前命令时，点工具栏“中断当前程序”并确认；“停止”仍然是在确认后终止整个 tmux 会话。
 
 没有选区时，复制按钮会复制当前屏幕；长按或右键复制按钮会复制完整历史。对于会接管鼠标的 AI TUI，可以先打开顶部“选择模式”再拖动。
 
@@ -92,6 +115,10 @@ http://127.0.0.1:8000
 图片、视频、音频、PDF 和常见文本可以直接预览，并支持前后切换与下载。
 
 ![文件预览](docs/images/file-preview.png)
+
+工作区文件面板还能编辑不超过 512 KiB 的 UTF-8 文件，保存时检查冲突并保留权限。Git 面板只读查看分支、修改和差异，不会替你暂存或提交。
+
+![工作区文件编辑器](docs/images/workspace-files.png)
 
 ## 06 · GPU 和磁盘放在同一个资源面板
 
@@ -119,21 +146,31 @@ GPU 页展示显存、利用率、温度、功耗、用户和进程名。它不�
 
 ## 09 · 手机上仍然是终端，不是缩小的桌面网页
 
-移动端保留 `Esc`、`Tab`、`Ctrl`、方向键等辅助键。软键盘出现时，终端会按 Visual Viewport 重算高度，避免光标和输入位置被遮住。
+移动端保留 `Esc`、`Tab`、`Ctrl`、方向键、回车等辅助键。点标题展开最近会话，点斜杠菜单选择对应工具支持的 `/model`、`/fast` 等原生命令；只填命令，不自动回车。配合方向和确认键，不打开软键盘也能操作原生菜单。滑动查看历史，先按住再拖动才选择文字。
 
 <p align="center">
   <img src="docs/images/mobile-terminal.png" width="390" alt="移动端终端">
 </p>
 
+<p align="center">
+  <img src="docs/images/mobile-recent.png" width="310" alt="手机最近会话列表">
+  <img src="docs/images/mobile-commands.png" width="310" alt="手机原生快捷命令">
+</p>
+
+## 外观 · 保留原生输入，不再加一层输入框
+
+默认石墨色，可选雾色玻璃、边缘流光、光标拖尾和淡色原生输入区。深浅色、手机、减少动态效果、省流和系统高对比度都有对应退化方式。动效不修改终端输出，也不请求模型 API。
+
 ## 10 · 断线、刷新、滚轮和字体这些细节也算功能
 
 - 浏览器断开只会分离 tmux 客户端，不会杀任务。
-- 普通 Shell 的滚轮进入 tmux 历史，Claude/Codex 等 TUI 的滚轮交给应用自己。
+- 内联终端使用 tmux 历史；全屏 Codex 使用细粒度原生滚轮，不再整页跳动或停留在旧屏幕快照。
 - 终端字体随项目自带，减少 Windows 客户端缺字、方框和特殊符号错位。
 - 中文输入法按 composition 生命周期处理，避免把合成中的文字拆成按键。
 - 页面支持浅色/深色、高对比度、减少动画和可安装 Web App 布局。
+- 慢速网络使用有界输出队列和背压，避免无限积压终端输出。
 
-这些问题为何出现、最后怎样处理，见 [曾经解决过的问题](docs/PROBLEMS_SOLVED.md)。
+这些问题为何出现、最后怎样处理，见 [曾经解决过的问题](docs/PROBLEMS_SOLVED.md) 和 [v0.2.0 更新说明](docs/releases/v0.2.0.md)。
 
 ## 操作手册
 
@@ -199,8 +236,11 @@ FastAPI 后端 ── attach ── tmux session ── Claude / Codex / OpenCod
 python3 -m unittest discover -s tests -v
 node --check frontend/app.js
 bash -n run.sh
+npm ci
+npx playwright install chromium
+npm run test:browser
 ```
 
 ## 开源协议
 
-项目代码使用 [MIT License](LICENSE)。内置 xterm.js 和 DejaVu 字体遵循各自协议，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。MIT 授权代码本身；项目名称和标识的使用边界另见 [TRADEMARKS.md](TRADEMARKS.md)。
+项目代码使用 [MIT License](LICENSE)。内置 xterm.js、Lucide 图标和字体遵循各自协议，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。MIT 授权代码本身；项目名称和标识的使用边界另见 [TRADEMARKS.md](TRADEMARKS.md)。

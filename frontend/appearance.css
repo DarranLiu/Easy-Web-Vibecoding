@@ -1,0 +1,156 @@
+html[data-ui="bridge"] .pane-host { position: relative; }
+.cc-effect-layer { position: absolute; inset: 0; z-index: 6; overflow: hidden; pointer-events: none; user-select: none; }
+.cc-effect-layer *, .cc-cursor-trail { pointer-events: none; }
+.cc-cursor-trail { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cc-aurora-edge { position: absolute; display: block; opacity: var(--fx-strength, .35); background: linear-gradient(100deg, #6ec4ab, #6e9bc4, #d96c85, #e8a33d, #6ec4ab); background-size: 260% 260%; box-shadow: 0 0 4px #6ec4ab40; animation: cc-aurora-flow 9s linear infinite, cc-aurora-breathe 5s ease-in-out infinite; }
+.cc-aurora-edge.top, .cc-aurora-edge.bottom { height: 2px; left: 0; right: 0; }
+.cc-aurora-edge.top { top: 0; }
+.cc-aurora-edge.bottom { bottom: 0; animation-direction: reverse; }
+.cc-aurora-edge.left, .cc-aurora-edge.right { width: 2px; top: 0; bottom: 0; }
+.cc-aurora-edge.left { left: 0; animation-delay: -3s, -1s; }
+.cc-aurora-edge.right { right: 0; animation-delay: -6s, -2s; }
+.cc-effect-layer[data-motion="static"] .cc-aurora-edge { animation: none; }
+.pane.selecting .cc-effect-layer { visibility: hidden; }
+.cc-appearance-settings { border-bottom: 1px solid var(--separator); }
+.cc-appearance-settings .ws-setting { gap: 8px; }
+.cc-appearance-settings select { width: 170px; max-width: 65%; min-width: 0; padding: 5px 4px; border: 1px solid var(--separator); border-radius: 4px; color: var(--text); background: var(--raised); font: inherit; font-size: 11px; }
+.cc-effect-strength input { min-width: 0; width: 100px; flex: 1; accent-color: var(--accent); }
+.cc-effect-strength output { width: 30px; flex: none; text-align: right; color: var(--text-2); font-size: 10px; font-variant-numeric: tabular-nums; }
+.cc-effect-state { padding: 5px 0 8px; color: var(--text-3); font-size: 10px; }
+@keyframes cc-aurora-flow { from { background-position: 0% 0%; } to { background-position: 100% 100%; } }
+@keyframes cc-aurora-breathe { 0%, 100% { opacity: calc(var(--fx-strength, .35) * .65); } 50% { opacity: var(--fx-strength, .35); } }
+@media (prefers-reduced-motion: reduce), (max-width: 820px) {
+  .cc-aurora-edge { animation: none; }
+  .cc-cursor-trail { display: none; }
+}
+@media (max-width: 820px) {
+  .cc-appearance-settings select { font-size: 16px; padding: 6px 4px; }
+}
+@media (forced-colors: active) { .cc-effect-layer { display: none; } }
+
+/* A single shared photographic surface; terminal text itself is never filtered. */
+html[data-ui="bridge"][data-terminal-style="glass"] {
+  --desktop-bg: #eceef3;
+  --shell-bg: transparent;
+  --sidebar-bg: #e5e8f0;
+  --content-bg: transparent;
+  --raised: #f6f7fa;
+  --layer-2: #e7e9f1;
+  --term-bg: #f0f1f6;
+  --text: #2e3142;
+  --text-2: #51586a;
+  --text-3: #656c7e;
+  --separator: #c5c9d5;
+  --separator-2: #d0d4df;
+  --hover: #dce0eb;
+  --hover-2: #d2d8e5;
+  --accent: #48668e;
+  --accent-soft: #d7e1ef;
+  --accent-fg: #ffffff;
+  --control-bg: #f0f2f7;
+  --control-bd: #bfc6d5;
+  --green: #357450;
+  --red: #ac3b4e;
+  --warning: #886319;
+  --blur: none;
+}
+html[data-ui="bridge"][data-terminal-style="glass"][data-theme="dark"] {
+  --desktop-bg: #20202e;
+  --sidebar-bg: #252532;
+  --raised: #2b2c3c;
+  --layer-2: #282836;
+  --term-bg: #20202e;
+  --text: #dedee8;
+  --text-2: #b7b9cb;
+  --text-3: #a0a1b5;
+  --separator: #454555;
+  --separator-2: #373746;
+  --hover: #353648;
+  --hover-2: #404157;
+  --accent: #a9bde8;
+  --accent-soft: #384358;
+  --accent-fg: #20202e;
+  --control-bg: #303142;
+  --control-bd: #51526a;
+  --green: #a5d6a7;
+  --red: #f28b91;
+  --warning: #e6ce91;
+}
+html[data-ui="bridge"][data-terminal-style="glass"] #app {
+  position: relative; z-index: 1; background: transparent;
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+html[data-ui="bridge"][data-terminal-style="glass"] #sidebar,
+html[data-ui="bridge"][data-terminal-style="glass"] #topbar,
+html[data-ui="bridge"][data-terminal-style="glass"] .ws-deck {
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+html[data-ui="bridge"][data-terminal-style="glass"] #panes { background: transparent; }
+html[data-ui="bridge"][data-terminal-style="glass"] #panes > .pane {
+  box-shadow: 0 0 0 1px var(--separator);
+}
+html[data-ui="bridge"][data-terminal-style="glass"] #panes > .pane.focused {
+  box-shadow: 0 0 0 1px var(--separator), inset 0 1px var(--accent);
+}
+html[data-ui="bridge"][data-terminal-style="glass"] .pane.focused > .pane-bar {
+  box-shadow: inset 0 1px var(--accent);
+}
+html[data-ui="bridge"][data-terminal-style="glass"] #panes > .pane > .pane-bar { background: var(--layer-2); }
+html[data-ui="bridge"][data-terminal-style="glass"] .pane .status-dot { box-shadow: none; }
+html[data-ui="bridge"][data-terminal-style="glass"] .pane .status-dot.green { background: var(--green); }
+html[data-ui="bridge"][data-terminal-style="glass"] .pane .status-dot.blue { background: var(--accent); }
+html[data-ui="bridge"][data-terminal-style="glass"] .codex-usage { background: transparent; }
+html[data-ui="bridge"][data-terminal-style="glass"] .window-controls { display: flex !important; gap: 6px; }
+html[data-ui="bridge"][data-terminal-style="glass"] .window-dot { width: 10px; height: 10px; }
+html[data-ui="bridge"][data-terminal-style="glass"] .app-brand:before { display: none; }
+html[data-ui="bridge"][data-terminal-style="glass"] .btn-sm.primary,
+html[data-ui="bridge"][data-terminal-style="glass"] .ui-btn.primary,
+html[data-ui="bridge"][data-terminal-style="glass"] .new-btn,
+html[data-ui="bridge"][data-terminal-style="glass"] .login-go {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-fg);
+}
+@supports ((filter: blur(1px))) {
+  html[data-ui="bridge"][data-terminal-style="glass"][data-glass-surface="translucent"] {
+    --sidebar-bg: rgba(229, 232, 240, .94);
+    --layer-2: rgba(231, 233, 241, .90);
+    --term-bg: rgba(243, 244, 249, .90);
+  }
+  html[data-ui="bridge"][data-terminal-style="glass"][data-glass-surface="translucent"][data-theme="dark"] {
+    --sidebar-bg: rgba(35, 35, 49, .82);
+    --layer-2: rgba(32, 32, 46, .66);
+    --term-bg: rgba(28, 28, 43, .72);
+  }
+  html[data-ui="bridge"][data-terminal-style="glass"][data-glass-surface="translucent"] body:before {
+    content: ""; position: fixed; inset: -24px; z-index: 0;
+    background: url("/assets/mist-coast.png?v=93") center / cover no-repeat;
+    filter: blur(20px) saturate(.45); opacity: .48; pointer-events: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  html[data-ui="bridge"][data-terminal-style="glass"] body:before { display: none; }
+}
+@media (forced-colors: active) {
+  html[data-ui="bridge"][data-terminal-style="glass"][data-theme] {
+    --desktop-bg: Canvas; --sidebar-bg: Canvas; --raised: Canvas; --layer-2: Canvas; --term-bg: Canvas;
+    --text: CanvasText; --text-2: CanvasText; --text-3: CanvasText;
+    --separator: CanvasText; --separator-2: CanvasText;
+    --accent: Highlight; --accent-soft: Canvas; --control-bg: Canvas; --control-bd: CanvasText;
+  }
+}
+
+html[data-ui="bridge"] { --input-region-bg: #e8edf4; --input-region-line: #b8c6d7; }
+html[data-ui="bridge"][data-theme="dark"] { --input-region-bg: #25262d; --input-region-line: #4b5262; }
+html[data-ui="bridge"][data-terminal-style="glass"] { --input-region-bg: #e0e5ef; --input-region-line: #b4bed1; }
+html[data-ui="bridge"][data-terminal-style="glass"][data-theme="dark"] { --input-region-bg: #2e3042; --input-region-line: #555c79; }
+html[data-ui="bridge"] .cc-input-region {
+  position: absolute; z-index: 0; box-sizing: border-box; border-radius: 3px;
+  background: var(--input-region-bg); border-block: 1px solid var(--input-region-line);
+  pointer-events: none; user-select: none;
+}
+html[data-ui="bridge"] .cc-input-region[hidden] { display: none; }
+html[data-ui="bridge"] .pane-host > .xterm { position: relative; z-index: 1; }
+html[data-ui="bridge"] .cc-input-region[data-agent="claude"] { border-color: transparent; }
+html[data-ui="bridge"] .pane.selecting .cc-input-region,
+html[data-ui="bridge"] .pane.restarting .cc-input-region { visibility: hidden; }
+.cc-input-setting input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+@media (forced-colors: active) { .cc-input-region { display: none !important; } }

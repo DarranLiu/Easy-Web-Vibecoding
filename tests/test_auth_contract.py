@@ -48,6 +48,13 @@ class AuthContractTests(unittest.TestCase):
                 main.require_auth(request)
             self.assertEqual(raised.exception.status_code, 401)
 
+    def test_query_string_token_cannot_authenticate_management_requests(self):
+        request = FakeRequest()
+        request.query_params = {'token': main.config.TOKEN}
+        with self.assertRaises(HTTPException) as raised:
+            main.require_auth(request)
+        self.assertEqual(raised.exception.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/en/desktop-split.png" alt="Easy Web Vibecoding split terminal workspace">
+  <img src="docs/images/en/workspace.png" alt="Easy Web Vibecoding workspace with three independent terminals">
 </p>
 
 <h1 align="center">Easy Web Vibecoding</h1>
@@ -21,12 +21,14 @@
 </p>
 
 <p align="center">
-  <strong>4</strong> terminal types · up to <strong>4</strong> panes · persistent tmux sessions · files and resource monitoring · desktop and mobile
+  <strong>4</strong> terminal types · up to <strong>4</strong> panes · hot updates · one-click session recovery · desktop and mobile
 </p>
 
 Easy Web Vibecoding turns command-line coding agents already installed on your Linux server into a browser workspace. Its interface is called **CC Terminal**. It is not a model proxy and it does not relay model API traffic: `tmux + FastAPI + xterm.js` connect your browser to the real terminal process.
 
 Close the tab, lose the network, or restart the web service. The job remains in tmux and can be resumed when you return.
+
+**New in v0.2.0:** check CLI versions, update the shared installation without restarting running windows, and restart a selected agent back into its **original conversation**. The new workspace tree keeps session switching and cross-project splits in the sidebar.
 
 > [!NOTE]
 > Every screenshot below comes from the real interface rendered in a browser. Sessions, paths, IP addresses, files, and hardware data are synthetic and do not identify a real server.
@@ -56,6 +58,27 @@ The host needs Python 3.10+ and `tmux`. Install and sign in to Claude Code, Code
 
 ## Visual tour
 
+### Hot updates and one-click recovery
+
+Open **Versions & updates** from the package icon. Compare the version in the current window, the shared installation, and the latest official release, then choose:
+
+| Action | What happens |
+| --- | --- |
+| Check latest | Checks official release metadata. It does not install or restart anything. |
+| Update only | Verifies and switches the shared CLI installation. Running windows keep their current process; new web and SSH launches under the same user use the new installation. |
+| Update & restore | Installs the update, restarts only the selected window, then verifies that its original conversation loaded. |
+| Restart & restore | Restarts the selected agent into its recorded session without installing an update. |
+| Roll back installation | Returns to the saved previous installation when available. It does not roll back conversation data. |
+
+![Running, installed and official versions with update and restore controls](docs/images/en/updates.png)
+
+Recovery supports **Codex, Claude Code and OpenCode**, including supported agents started from a web shell. It records the session identity and checks the executable, supported launch arguments and target process before sending an exit or resume command. If the session cannot be identified safely, recovery is blocked or asks you to bind the exact original session. It never guesses another conversation with `--last` or `--continue`.
+
+![Confirm restarting the exact original conversation](docs/images/en/restart.png)
+
+> [!IMPORTANT]
+> “Hot update” means updating the installation **without stopping existing processes**. It does not upgrade code inside a running CLI. Restarting an agent can interrupt work and discard unsent input; restoring its conversation does not resume an in-progress command or recover RAM after a host reboot. Other terminal windows are not restarted. See the [update and recovery guide](docs/UPDATES.en.md).
+
 ### Start the right tool in the right directory
 
 Choose a project, then launch a new Claude session, resume Claude, start Codex, OpenCode, or a normal shell. Tools that are not installed are omitted instead of becoming broken menu items.
@@ -64,13 +87,13 @@ Choose a project, then launch a new Claude session, resume Claude, start Codex, 
 
 ### Work in up to four panes
 
-Each tab owns an independent tmux session. Arrange terminals side by side, stacked, or automatically; drag the divider, swap panes, and switch tabs without stopping the underlying task.
+Expand a workspace in the left sidebar to see its terminals. Click a session to focus it; use its split icon to add it beside another terminal, even from a different project. Switching workspaces changes navigation, not the panes already on screen. Up to four panes support draggable dividers and swapping; mobile and desktop layouts are saved separately.
 
 ![Two terminal panes](docs/images/en/desktop-split.png)
 
-### Copy terminal output without breaking Ctrl+C
+### Copy with Ctrl+C, interrupt deliberately
 
-Select text and use the copy button, `Ctrl+Shift+C` on Windows/Linux, or `Cmd+C` on macOS/iPad. Plain `Ctrl+C` still sends an interrupt. Selection mode makes mouse-driven TUIs easier to copy from, and a long press or right click copies full scrollback.
+In the web terminal, `Ctrl+C`, `Ctrl+Shift+C`, and macOS `Cmd+C` **only copy selected text**. No selection or a clipboard error never becomes an interrupt. To cancel a command, use the separate **Interrupt current program** toolbar button and confirm. **Stop** still terminates the tmux session after confirmation. The copy button can also copy the screen; long press or right click requests the available scrollback.
 
 ![Terminal selection and copy feedback](docs/images/en/copy-text.png)
 
@@ -87,6 +110,10 @@ Browse, filter, upload, download, create, rename, and delete files inside the `C
 Preview common text, image, video, audio, and PDF files without opening a remote desktop.
 
 ![File preview](docs/images/en/file-preview.png)
+
+The workspace file panel can edit UTF-8 files up to 512 KiB, detect conflicting saves, and preserve permissions. The Git panel shows branch, changes and diffs without staging or committing anything.
+
+![Workspace file editor](docs/images/en/workspace-files.png)
 
 ### Monitor the machine without leaking command lines
 
@@ -112,22 +139,32 @@ Only the focused Codex pane shows its remaining percentage and reset time. Hidde
 
 ### Use it from a phone
 
-The mobile layout keeps practical terminal keys such as `Esc`, `Tab`, `Ctrl`, and arrows. Visual Viewport resizing keeps the cursor above the software keyboard.
+The mobile layout keeps practical terminal keys such as `Esc`, `Tab`, `Ctrl`, arrows and Enter. Tap the title for recent sessions, or the slash menu for native commands such as `/model` and `/fast` where supported. Commands are inserted without automatically pressing Enter; use the auxiliary keys to navigate native menus without opening the software keyboard. A swipe scrolls; holding still first allows text selection.
 
 <p align="center">
   <img src="docs/images/en/mobile-terminal.png" width="390" alt="Mobile terminal workspace">
 </p>
 
+<p align="center">
+  <img src="docs/images/en/mobile-recent.png" width="310" alt="Recent sessions on mobile">
+  <img src="docs/images/en/mobile-commands.png" width="310" alt="Native slash commands on mobile">
+</p>
+
+### A quieter terminal workspace
+
+Graphite is the default. Optional Mist Glass, edge glow, cursor trails and a subtle native input-region tint keep the real terminal input rather than adding another composer. Motion and transparency fall back appropriately for mobile, reduced-motion, data-saving and high-contrast settings. Effects do not change terminal output or call model APIs.
+
 ## Details that matter in daily use
 
 - Browser disconnects detach the tmux client; they do not terminate the job.
-- The wheel enters tmux history in a normal shell and stays available to full-screen Claude/Codex-style TUIs.
+- The wheel enters tmux history for inline terminals; full-screen Codex receives fine-grained native wheel input instead of page-sized jumps or a stale tmux snapshot.
 - Bundled terminal fonts reduce missing symbols and alignment problems on Windows clients.
 - IME composition is handled as composition, avoiding broken Chinese/Japanese/Korean input.
 - Light, dark, high-contrast, reduced-motion, and installable PWA layouts are supported.
 - API responses and file previews use `Cache-Control: no-store`.
+- Slow browser connections apply bounded backpressure instead of building an unlimited terminal-output queue.
 
-The [visual guide](docs/VISUAL_GUIDE.md) covers each workflow step by step. The [problems solved](docs/PROBLEMS_SOLVED.en.md) document explains the terminal, input, reconnect, font, and usage-meter issues behind these choices. The visual guide is currently in Chinese; its screenshots and controls match the interface.
+The [visual guide](docs/VISUAL_GUIDE.md) covers each workflow step by step in Chinese. The [problems solved](docs/PROBLEMS_SOLVED.en.md) and [v0.2.0 release notes](docs/releases/v0.2.0.md) explain the fixes and upgrade boundaries. English preview labels are translated for documentation; the shipped interface currently uses primarily Chinese controls.
 
 ## Architecture
 
@@ -177,6 +214,9 @@ Authentication exchanges the master token for a server-signed, time-limited Http
 python3 -m unittest discover -s tests -v
 node --check frontend/app.js
 bash -n run.sh
+npm ci
+npx playwright install chromium
+npm run test:browser
 ```
 
 ## Contributing and support
@@ -187,4 +227,4 @@ If this project makes a remote coding workflow easier, a GitHub star helps other
 
 ## License and project identity
 
-The source code is available under the [MIT License](LICENSE). Bundled xterm.js files and DejaVu fonts retain their upstream licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). MIT covers the code, not an implied right to present a modified project as the official Easy Web Vibecoding distribution; see [TRADEMARKS.md](TRADEMARKS.md).
+The source code is available under the [MIT License](LICENSE). Bundled xterm.js, Lucide icons and fonts retain their upstream licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). MIT covers the code, not an implied right to present a modified project as the official Easy Web Vibecoding distribution; see [TRADEMARKS.md](TRADEMARKS.md).
