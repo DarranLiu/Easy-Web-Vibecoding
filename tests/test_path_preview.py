@@ -152,19 +152,36 @@ class PathPreviewTests(unittest.TestCase):
             self.assertIn("attachment", main.fs_download(str(p)).headers["content-disposition"])
 
     def test_range_download_is_preserved(self):
-        response = main.fs_download(str(self.file("clip.mp4", b"0123456789")), inline=1)
-        messages = []
+        path = self.file("clip.mp4", b"0123456789")
+        for spec_version in ("2.0", "2.4"):
+            with self.subTest(spec_version=spec_version):
+                response = main.fs_download(str(path), inline=1)
+                messages = []
 
-        async def send(message):
-            messages.append(message)
+                async def send(message):
+                    messages.append(message)
 
-        async def receive():
-            return {"type": "http.request", "body": b""}
+                async def transfer():
+                    request_sent = False
+                    disconnected = asyncio.Event()
 
-        asyncio.run(response({"type": "http", "method": "GET", "headers": [(b"range", b"bytes=2-5")]}, receive, send))
-        start = next(m for m in messages if m["type"] == "http.response.start")
-        self.assertEqual(start["status"], 206)
-        self.assertEqual(b"".join(m.get("body", b"") for m in messages), b"2345")
+                    async def receive():
+                        nonlocal request_sent
+                        if not request_sent:
+                            request_sent = True
+                            return {"type": "http.request", "body": b"", "more_body": False}
+                        # A connected client waits; an immediate response here starves streaming.
+                        await disconnected.wait()
+                        return {"type": "http.disconnect"}
+
+                    scope = {"type": "http", "method": "GET", "asgi": {"spec_version": spec_version},
+                             "headers": [(b"range", b"bytes=2-5")]}
+                    await asyncio.wait_for(response(scope, receive, send), timeout=5)
+
+                asyncio.run(transfer())
+                start = next(m for m in messages if m["type"] == "http.response.start")
+                self.assertEqual(start["status"], 206)
+                self.assertEqual(b"".join(m.get("body", b"") for m in messages), b"2345")
 
 
 if __name__ == "__main__":

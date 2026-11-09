@@ -10,6 +10,7 @@ This project follows [Semantic Versioning](https://semver.org/) for tagged relea
 - Delayed terminal connections do not reopen a mobile keyboard after file paste or steal keyboard focus while screen reordering is being saved.
 - Failed layout reconciliation retains the same explicit unsaved-state warning.
 - CI fixtures no longer assume AI tools are installed on the host. Native shell integration tests explicitly run without them, and rendering assertions wait for workspace/resize completion. Python matrix jobs now finish independently so one failure does not cancel the other version's diagnostics.
+- The range-download test correctly waits for client events with newer Starlette versions instead of busy-looping. It verifies both older and newer ASGI response paths with a bounded timeout.
 
 ## [0.3.0] - 2026-11-09
 
