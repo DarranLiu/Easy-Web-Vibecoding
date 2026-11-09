@@ -206,6 +206,8 @@ async function workspace(page, theme = 'dark', options = {}) {
   });
   await page.goto(options.url || 'http://workspace.test/');
   await page.waitForFunction(allowEmpty => window.ccWorkspace?.ready && (allowEmpty || active?.ws?.readyState === 1), !!options.allowEmpty);
+  // Screen restoration and workspace metadata are independent requests.
+  if (!options.workspacesFailure) await page.waitForFunction(() => window.ccWorkspace?.current);
   await page.evaluate(() => document.fonts.ready);
   await page.evaluate(() => new Promise(resolve => active?.term ? active.term.write('API workspace\r\n\r\n\x1b[32mPASS\x1b[0m terminal history\r\n\x1b[32mPASS\x1b[0m session recovery\r\n\r\n~/workspace/demo $ npm test\r\nAll checks passed.\r\n', resolve) : resolve()));
   return { errors, requests, layouts, spaces, tabs, changeFile: () => { edit.etag = 'external'; } };

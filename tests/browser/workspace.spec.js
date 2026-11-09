@@ -3755,11 +3755,13 @@ test('native input tint hides for earlier-message and tmux history markers and r
 });
 
 test('native input tint resumes after a pending paint runs inside the wheel pause', async ({ page }) => {
-  await page.clock.install();
+  const start = Date.now();
+  await page.clock.install({ time: start });
   const fixture = await workspace(page); await openNative(page); await nativeScreen(page);
   const region = page.locator('.cc-input-region:not([hidden])');
   await expect(region).toHaveCount(1);
-  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
+  // Beyond the test timeout, but below the app's sleep-recovery threshold.
+  await page.clock.pauseAt(start + 45000);
   await page.evaluate(() => {
     ccNativeInput.detach(active); ccNativeInput.sync();
     active.host.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
