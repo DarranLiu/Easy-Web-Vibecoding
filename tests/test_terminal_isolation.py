@@ -39,6 +39,7 @@ class TerminalIsolationTests(unittest.TestCase):
             binary.write_text(f'#!{sys.executable}\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n')
             binary.chmod(0o700)
             self.stack.enter_context(patch.object(config, agent.upper() + "_BIN", str(binary)))
+            self.stack.enter_context(patch.object(config, agent.upper() + "_OK", True))
         self.environment = {**os.environ, **terminal_launch.session_environment()}
 
     def run_shell(self, shell, flags, command):
@@ -55,6 +56,35 @@ class TerminalIsolationTests(unittest.TestCase):
                     self.assertIn(f'alias {agent}=_cc_web_{agent}', command)
                 calls = self.run_shell("/bin/sh", ["-ic"], command + "\ncodex resume\n")
                 self.assertEqual(calls[-1], ["--no-daemon", "--no-alt-screen", "resume"])
+
+    def test_missing_optional_agents_do_not_block_installed_agent_or_shell(self):
+        for agent in ("claude", "opencode"):
+            (self.native / agent).unlink()
+        self.environment.update(terminal_launch.session_environment())
+        self.assertEqual(self.run_shell("/bin/sh", ["-c"], "codex resume"),
+                         [["--no-daemon", "--no-alt-screen", "resume"]])
+        self.assertEqual(self.run_shell("/bin/sh", ["-c"], "printf '[]\\n'"), [[]])
+        for agent in ("claude", "opencode"):
+            result = subprocess.run([str(self.launchers / agent), "--version"], env=self.environment,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 127)
+            self.assertIn("will not fall back", result.stderr)
+
+    def test_no_agents_or_unusable_agent_paths_still_allow_shell_environment(self):
+        for agent in terminal_launch.AGENTS:
+            (self.native / agent).unlink()
+        for agent in terminal_launch.AGENTS:
+            with self.subTest(agent=agent), patch.object(config, agent.upper() + "_BIN", agent):
+                environment = terminal_launch.session_environment()
+                self.assertEqual(environment["CC_WEB_REAL_" + agent.upper()], "")
+        unavailable = self.native / "codex"
+        unavailable.write_text("not executable")
+        unavailable.chmod(0o600)
+        environment = terminal_launch.session_environment()
+        self.assertEqual(environment["CC_WEB_REAL_CODEX"], str(unavailable))
+        result = subprocess.run([str(self.launchers / "codex")], env={**self.environment, **environment},
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 127)
 
     def test_resume_remains_isolated_in_child_shells_and_command_lookup(self):
         for shell, flags in (("sh", ["-c"]), ("sh", ["-ic"]), ("bash", ["-c"]),

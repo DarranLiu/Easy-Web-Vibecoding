@@ -167,7 +167,10 @@ def session_environment(use_updates=True):
         base = os.path.abspath(binary) if binary else ""
         env["CC_WEB_BASE_" + agent.upper()] = base
         env["CC_WEB_SHARED_" + agent.upper()] = base
-        env["CC_WEB_REAL_" + agent.upper()] = agent_updates.selected_binary(agent, base) if use_updates else base
+        # Optional tools must not prevent an unrelated agent or a plain shell
+        # from starting. Their own launcher still rejects missing executables.
+        available = base and os.path.isfile(base) and os.access(base, os.X_OK)
+        env["CC_WEB_REAL_" + agent.upper()] = agent_updates.selected_binary(agent, base) if use_updates and available else base
     bash = shutil.which("bash", path=path)
     if bash:
         env["CC_WEB_REAL_BASH"] = bash

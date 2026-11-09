@@ -22,6 +22,8 @@ test.beforeAll(async () => {
     CC_WEB_WORKSPACE_DB: path.join(root, 'layout.sqlite3'), CC_WEB_AGENT_RUNTIME_DIR: path.join(root, 'runtime'),
     CC_WEB_AGENT_UPDATE_DIR: path.join(root, 'updates'), CC_WEB_TERMINAL_LAUNCHER_DIR: path.join(root, 'launchers'),
     CC_WEB_CODEX_MODEL_CATALOG: '', LANG: 'C.UTF-8', TERM: 'xterm-256color', BASH_ENV: '', ENV: '' };
+  // A shell-only fresh install must work even on a developer machine with CLIs.
+  for (const agent of ['CODEX', 'CLAUDE', 'OPENCODE']) isolatedEnv['CC_WEB_' + agent] = path.join(root, 'not-installed', agent.toLowerCase());
   const port = await new Promise((resolve, reject) => {
     const listener = net.createServer();
     listener.once('error', reject);
@@ -55,7 +57,15 @@ test.afterAll(async () => {
 
 test('real API moves workspace membership without stopping a shell', async ({ page }) => {
   await page.request.post(base + '/api/login', {data:{token:testToken}});
-  const session = await (await page.request.post(base + '/api/sessions', {data:{type:'shell',mode:'new',cwd:work}})).json();
+  const config = await (await page.request.get(base + '/api/config')).json();
+  expect(config.types).toEqual({ shell: true, codex: false, claude: false, opencode: false });
+  for (const type of ['codex', 'claude', 'opencode']) {
+    const missing = await page.request.post(base + '/api/sessions', { data: { type, cwd: work } });
+    expect(missing.status(), await missing.text()).toBe(503);
+  }
+  const create = await page.request.post(base + '/api/sessions', {data:{type:'shell',mode:'new',cwd:work}});
+  expect(create.status(), await create.text()).toBe(200);
+  const session = await create.json();
   const sid = session.id;
   expect(sid).toBeTruthy();
   const a = await (await page.request.post(base + '/api/workspaces', {data:{name:'Source',cwd:work,members:[sid]}})).json();

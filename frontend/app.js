@@ -2406,6 +2406,7 @@ function attachTerminal(tab, pane, { passive = false } = {}) {
   const stale = () => self.gen !== gen;
   function focusConnectedTerminal() {
     if (passive || stale() || active !== self || self.term !== term || self.dead) return;
+    if (COARSE || document.querySelector('#ws-screen-tabs button:disabled')) return;
     const focused = document.activeElement;
     if (document.querySelector(".modal:not(.hidden):not(.is-closing),.ui-dialog-backdrop:not(.hidden):not(.is-closing),.login:not(.hidden):not(.is-closing)")) return;
     if (focused && !focused.closest(".xterm") && (focused.matches("input,textarea,select,[role='tab']") || focused.isContentEditable)) return;

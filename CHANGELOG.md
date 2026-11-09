@@ -4,6 +4,13 @@ This project follows [Semantic Versioning](https://semver.org/) for tagged relea
 
 ## [Unreleased]
 
+### Fixed
+
+- A fresh install can open a normal shell or an installed agent without requiring every optional AI CLI. Missing tools still fail explicitly when invoked; web launchers never fall back to another executable or an old shared backend.
+- Delayed terminal connections do not reopen a mobile keyboard after file paste or steal keyboard focus while screen reordering is being saved.
+- Failed layout reconciliation retains the same explicit unsaved-state warning.
+- CI fixtures no longer assume AI tools are installed on the host. Native shell integration tests explicitly run without them, and rendering assertions wait for workspace/resize completion. Python matrix jobs now finish independently so one failure does not cancel the other version's diagnostics.
+
 ## [0.3.0] - 2026-11-09
 
 ### Added

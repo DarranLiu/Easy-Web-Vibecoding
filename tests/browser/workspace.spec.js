@@ -740,6 +740,7 @@ test('screens edits during an in-flight save are journaled then saved with the n
 
 test('screens refusing an old backend preserves local state instead of claiming successful saves', async ({ page }) => {
   const fixture = await workspace(page, 'dark');
+  await page.evaluate(() => ccWorkspace.persist());
   await page.route('**/api/layouts/*', route => {
     if (route.request().method() !== 'PUT') return route.fallback();
     const body = route.request().postDataJSON();
@@ -2171,6 +2172,7 @@ test('pane selection scrolls only the sidebar to an offscreen session and repeat
   await page.setViewportSize({ width: 1440, height: 700 });
   const extraSpaces = Array.from({ length: 24 }, (_, i) => ({ id: 'group_' + i, name: 'Pinned project ' + i, cwd: '/workspace/project' + i, members: [], pinned: true, revision: 1 }));
   const fixture = await workspace(page, 'dark', { extraSpaces, initial: { panes: ['demo01', 'demo03'], active: 'demo01' } });
+  await expect.poll(() => page.evaluate(() => ccWorkspace.current?.id)).toBe('ws_demo');
   const context = await page.evaluate(() => ccWorkspace.current.id);
   const terminal = await page.locator('#panes').boundingBox();
   await page.locator('.pane').nth(1).locator('.pane-name').click();
@@ -3853,8 +3855,15 @@ for (const theme of ['dark', 'light']) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       await page.screenshot({ path: `/tmp/webcc-v94-native-input-${theme}-${width}.png` });
       await page.setViewportSize({ width, height: 640 });
+      await page.waitForFunction(() => {
+        const size = active.fit.proposeDimensions();
+        return active.host.getBoundingClientRect().bottom <= 640 && size?.rows === active.term.rows && size?.cols === active.term.cols;
+      });
       await nativeScreen(page); await expect(region).toBeVisible();
-      const resized = await region.boundingBox(); expect(resized.y + resized.height).toBeLessThanOrEqual(640);
+      await expect.poll(async () => {
+        const resized = await region.boundingBox();
+        return !!resized && resized.y + resized.height <= 640;
+      }).toBe(true);
       expect(fixture.errors).toEqual([]);
     });
   }

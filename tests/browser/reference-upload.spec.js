@@ -239,6 +239,7 @@ test.describe('touch', () => {
     await expect(page.locator('#reference-modal')).toBeHidden();
     expect(uploads()).toBe(1);
     expect((await sentInputs(page)).map(item => item.data)).toEqual([' ' + path + ' ']);
+    await page.evaluate(() => active.ws.onopen?.());
     expect(await page.evaluate(() => document.activeElement === active.term.textarea)).toBe(false);
   });
 });

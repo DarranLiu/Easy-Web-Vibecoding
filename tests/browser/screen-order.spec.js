@@ -83,6 +83,28 @@ test('keyboard reordering preserves focused tab and ordinary arrows still change
   noNative(fixture);
 });
 
+test('delayed socket open cannot steal focus while keyboard reordering awaits a save', async ({ page }) => {
+  const fixture = await workspace(page, 'dark', options());
+  await page.evaluate(() => ccWorkspace.persist());
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/layouts/*', async route => {
+    if (route.request().method() === 'PUT') await gate;
+    await route.fallback();
+  });
+  const tab = page.locator('#ws-screen-tabs [data-screen="first"]');
+  await tab.focus();
+  await page.keyboard.press('Control+Shift+ArrowRight');
+  await expect(tab).toBeDisabled();
+  await page.evaluate(() => active.ws.onopen?.());
+  expect(await page.evaluate(() => document.activeElement === active.term.textarea)).toBe(false);
+  release();
+  await expect.poll(() => order(page)).toEqual(['second', 'first', 'third']);
+  await expect(tab).toBeEnabled();
+  await expect(tab).toBeFocused();
+  noNative(fixture);
+});
+
 test('self drop does not save or modify any screen', async ({ page }) => {
   const fixture = await workspace(page, 'dark', options());
   await remember(page);

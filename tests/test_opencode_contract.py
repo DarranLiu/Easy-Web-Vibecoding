@@ -1,5 +1,6 @@
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from backend import main
 
@@ -13,7 +14,9 @@ class OpenCodeContractTests(unittest.TestCase):
     def test_backend_exposes_and_launches_opencode(self):
         self.assertTrue(hasattr(main.config, "OPENCODE_BIN"))
         self.assertTrue(hasattr(main.config, "OPENCODE_OK"))
-        self.assertTrue(main.config.OPENCODE_OK)
+        for available in (False, True):
+            with patch.object(main.config, "OPENCODE_OK", available):
+                self.assertEqual(main.get_config()["types"]["opencode"], available)
         command = main._launch_cmd("opencode", "new")
         self.assertIn('alias opencode=_cc_web_opencode', command)
         self.assertTrue(command.endswith('_cc_web_opencode --port 0 --hostname 127.0.0.1'))

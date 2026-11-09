@@ -592,7 +592,7 @@
       journal(packedSnapshot(), false); indicator("已同步"); renderNavigation();
       return true;
     } catch (error) {
-      indicator("布局尚未同步 · 可重试处理", true); notify(error); return false;
+      indicator("布局未保存 · 可重试同步或保存副本", true); notify(error); return false;
     } finally { resolvingLayout = false; applyingLayout = false; }
   }
 
