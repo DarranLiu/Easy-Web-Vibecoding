@@ -2409,7 +2409,7 @@ function attachTerminal(tab, pane, { passive = false } = {}) {
     if (COARSE || document.querySelector('#ws-screen-tabs button:disabled')) return;
     const focused = document.activeElement;
     if (document.querySelector(".modal:not(.hidden):not(.is-closing),.ui-dialog-backdrop:not(.hidden):not(.is-closing),.login:not(.hidden):not(.is-closing)")) return;
-    if (focused && !focused.closest(".xterm") && (focused.matches("input,textarea,select,[role='tab']") || focused.isContentEditable)) return;
+    if (focused && focused !== document.body && focused !== document.documentElement && !focused.closest(".xterm")) return;
     try { term.focus(); } catch (e) {}
   }
 

@@ -90,7 +90,9 @@
       frame = 0; lastScan = performance.now();
       if (stopped || pane.term !== term || !pane.el.isConnected || pane.dead || document.hidden || contrast.matches
         || !enabled || pane.connectionState !== "connected" || pane.ws?.readyState !== 1
-        || pane.el.classList.contains("selecting") || pane.el.classList.contains("restarting") || term.hasSelection() || lastScan < pausedUntil) { hide(); return; }
+        || pane.el.classList.contains("selecting") || pane.el.classList.contains("restarting") || term.hasSelection()) { hide(); return; }
+      // A previously queued paint can run before the wheel pause ends.
+      if (lastScan < pausedUntil) { hide(); schedule(); return; }
       const region = locate(term, agent(pane)), screen = term.element?.querySelector(".xterm-screen");
       if (region === false || !screen) { hide(); return; }
       if (!region || !cursorShown) { unsettled(); return; }

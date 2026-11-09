@@ -1695,6 +1695,18 @@ test('late terminal connection and focus timers leave form editing alone', async
   expect(fixture.errors).toEqual([]);
 });
 
+test('late terminal connection preserves focused screen and quota buttons', async ({ page }) => {
+  const fixture = await workspace(page, 'dark', { initial: { panes: ['demo02'], active: 'demo02' } });
+  await expect(page.locator('#codex-quota .quota-battery-value')).toHaveText('73%');
+  for (const selector of ['#ws-screen-add', '#codex-quota']) {
+    await page.locator(selector).focus();
+    await page.evaluate(() => active.ws.onopen?.());
+    await expect(page.locator(selector)).toBeFocused();
+  }
+  expect(await page.evaluate(() => sent.filter(item => item.type === 'input'))).toEqual([]);
+  expect(fixture.errors).toEqual([]);
+});
+
 for (const theme of ['dark', 'light']) {
   for (const width of [320, 390, 820, 1024, 1440, 1920, 3440]) {
     test(`${theme} workspace fits ${width}px`, async ({ page }) => {
@@ -3739,6 +3751,23 @@ test('native input tint hides for earlier-message and tmux history markers and r
     await page.waitForTimeout(400); await expect(page.locator('.cc-input-region:not([hidden])')).toHaveCount(0);
   }
   await nativeScreen(page); await expect(page.locator('.cc-input-region:not([hidden])')).toHaveCount(1);
+  expect(fixture.errors).toEqual([]);
+});
+
+test('native input tint resumes after a pending paint runs inside the wheel pause', async ({ page }) => {
+  await page.clock.install();
+  const fixture = await workspace(page); await openNative(page); await nativeScreen(page);
+  const region = page.locator('.cc-input-region:not([hidden])');
+  await expect(region).toHaveCount(1);
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()));
+  await page.evaluate(() => {
+    ccNativeInput.detach(active); ccNativeInput.sync();
+    active.host.dispatchEvent(new WheelEvent('wheel', { deltaY: -1, bubbles: true }));
+  });
+  await page.clock.runFor(100);
+  await expect(region).toHaveCount(0);
+  await page.clock.runFor(400);
+  await expect(region).toHaveCount(1);
   expect(fixture.errors).toEqual([]);
 });
 
