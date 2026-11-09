@@ -71,7 +71,7 @@ class CodexContractTests(unittest.TestCase):
                 environment = {**os.environ, **terminal_launch.session_environment()}
             base = ["--no-daemon", "--no-alt-screen", "-c", f"model_catalog_json={json.dumps(catalog)}",
                     "-c", 'tui.status_line=["context-remaining"]']
-            extra = ["resume", "demo-session", "--model", "gpt-6.1-sol", "--sandbox", "workspace-write",
+            extra = ["resume", "demo-session", "--model", "demo-model", "--sandbox", "workspace-write",
                      "--ask-for-approval", "on-request", "keep my quoted draft; not a shell command"]
             full_access = ["resume", "--sandbox", "danger-full-access", "--ask-for-approval", "never"]
             script = (launch + "\ncodex " + shlex.join(extra) + "\n codex "

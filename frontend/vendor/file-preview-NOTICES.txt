@@ -1,0 +1,16 @@
+File preview runtime dependencies
+
+markdown-it 15.0.3 - MIT
+https://github.com/markdown-it/markdown-it
+License: markdown-it-LICENSE.txt
+Bundled runtime dependency licenses: markdown-it-THIRD-PARTY.txt
+
+Papa Parse 5.7.0 - MIT
+https://github.com/mholt/PapaParse
+License: papaparse-LICENSE.txt
+
+DOMPurify 3.4.17 - Apache-2.0 OR MPL-2.0
+https://github.com/cure53/DOMPurify
+This distribution uses the Apache-2.0 option: DOMPurify-LICENSE.txt.
+
+The distributed minified browser builds are unmodified. No CDN is used at runtime.

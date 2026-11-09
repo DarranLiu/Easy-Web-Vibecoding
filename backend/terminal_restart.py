@@ -8,7 +8,7 @@ import subprocess
 import time
 
 from backend import agent_sessions as sessions
-from backend import config, terminal_launch, terminal_preflight, tmux_mgr
+from backend import config, terminal_launch, terminal_preflight, terminal_permissions, tmux_mgr
 
 
 class RestartError(RuntimeError):
@@ -47,9 +47,10 @@ def _foreground(pane):
     agents = []
     for pid in sessions.descendants(root["pid"]):
         info = sessions.process(pid)
-        if (info and info["tty"] == root["tty"] and info["pgid"] == info["foreground"]
-                and info["comm"] in {"codex", "claude", "opencode"}):
-            agents.append(info)
+        if info and info["tty"] == root["tty"] and info["pgid"] == info["foreground"]:
+            agent = sessions.native_agent(info)
+            if agent:
+                agents.append({**info, "comm": agent})
     if len(agents) > 1:
         # Keep the root agent, not its same-group helper children.
         agents = [item for item in agents if not any(
@@ -103,6 +104,8 @@ def _record(sid, tab, pane, foreground):
         record = opencode_sessions.refresh(sid, record, final=True)
     if record.get("agent") not in terminal_launch.AGENTS:
         raise RestartError("此程序暂不支持原会话恢复", 400)
+    if record["agent"] == "claude":
+        record = sessions.refresh_claude_transcript(sid, record)
     if not Path(record.get("cwd", "")).is_dir():
         raise RestartError("原会话目录已不存在")
     return record
@@ -116,7 +119,7 @@ _COMMON_VALUES = {"--model", "-m", "--add-dir", "--profile", "--agent", "--setti
                   "--system-prompt-snapshot", "--advisor"}
 _CODEX_VALUES = {"--config", "-c", "--enable", "--disable", "--local-provider", "-p", "--sandbox", "-s",
                  "--ask-for-approval", "-a", "--image", "-i"}
-_BOOLEAN = {"--no-daemon", "--no-alt-screen", "--oss", "--approve-for-me", "--search", "--strict-config",
+_BOOLEAN = {"--no-daemon", "--no-alt-screen", "--oss", "--approve-for-me", "--not-so-yolo", "--yolo", "--full-auto", "--search", "--strict-config",
             "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust",
             "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--strict-mcp-config",
             "--chrome", "--no-chrome", "--ide", "--bare", "--safe-mode", "--restricted", "--verbose",
@@ -203,14 +206,14 @@ def resume_arguments(record):
 
 def _expected(sid, pane, record):
     fields = [sid, pane["id"] if pane else None, pane["pid"] if pane else None, record.get("run"), record.get("pid"), record.get("start"),
-              record.get("session_id"), record.get("cwd"), record.get("args")]
+              record.get("session_id"), record.get("cwd"), record.get("args"), record.get("permission_mode")]
     return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 
 def _ensure_identity(sid, record):
     with sessions.lock(sid):
         latest = sessions.load(sid)
-        if any(latest.get(key) != record.get(key) for key in ("run", "pid", "start", "session_id", "cwd", "args")):
+        if any(latest.get(key) != record.get(key) for key in ("run", "pid", "start", "session_id", "cwd", "args", "permission_mode")):
             raise RestartError("原会话已改变，已取消继续重启；请重新确认")
 
 
@@ -220,12 +223,7 @@ def inspect(sid, tab):
     return _inspect(sid, tab)
 
 
-def _inspect(sid, tab):
-    pane = _existing_pane(sid)
-    foreground = _foreground(pane) if pane else None
-    record = _record(sid, tab, pane, foreground)
-    if record.get("ambiguous"):
-        raise RestartError("此程序同时持有多个会话，不能准确判断当前会话；不会猜测或停止它")
+def _validate_claude(record):
     if record["agent"] == "claude":
         args = record.get("args", [])
         if any(arg in {"--bare", "--safe-mode"} for arg in args):
@@ -235,6 +233,15 @@ def _inspect(sid, tab):
                 path = Path(args[index + 1])
                 if not record.get("managed") and path.parent == config.AGENT_RUNTIME_DIR and path.name.endswith("-settings.json"):
                     raise RestartError("原始启动记录缺失且程序依赖临时设置，不能安全自动重启")
+
+
+def _inspect(sid, tab):
+    pane = _existing_pane(sid)
+    foreground = _foreground(pane) if pane else None
+    record = _record(sid, tab, pane, foreground)
+    if record.get("ambiguous"):
+        raise RestartError("此程序同时持有多个会话，不能准确判断当前会话；不会猜测或停止它")
+    _validate_claude(record)
     if record["agent"] == "claude" and not record.get("hook_seen") and not record.get("bound"):
         return {"ready": False, "canBind": bool(foreground), "reason": "此旧窗口尚未记录会话 ID，需要先绑定原会话", "agent": "claude"}
     if record["agent"] == "opencode" and not record.get("hook_seen") and not record.get("bound"):
@@ -247,6 +254,10 @@ def _inspect(sid, tab):
             raise RestartError("OpenCode 当前会话跟踪已失效，不能确认此刻选中的对话；不会停止程序")
     if not sessions.transcript_exists(record):
         raise RestartError("尚无可恢复的会话记录，或记录已被删除；不会停止此终端")
+    if record.get("history_bound") and not foreground:
+        from backend import terminal_recovery
+        if record["session_id"] in terminal_recovery._occupied(record, sid):
+            raise RestartError("此对话正在其他窗口运行，不能重复启动")
     arguments = resume_arguments(record)
     # Validate isolation before even interrupting the old process.
     terminal_launch.guarded_arguments(record["agent"], arguments, {})
@@ -355,11 +366,31 @@ def _codex_interrupt_state(sid, pane, record):
 
 
 def restart_locked(sid, tab, body):
+    record = sessions.load(sid)
+    if not record.get("history_bound"):
+        return _restart_locked(sid, tab, body)
+    # Different legacy tabs must not concurrently launch one selected dialogue.
+    key = _conversation_key(record)
+    try:
+        with sessions.lock(key, "conversation", blocking=False):
+            return _restart_locked(sid, tab, body)
+    except BlockingIOError:
+        raise RestartError("此对话正在其他窗口恢复，请稍后刷新")
+
+
+def _conversation_key(record):
+    return "dialog_" + hashlib.sha256(json.dumps([record.get("agent"), str(Path(record.get("home") or "").resolve()),
+                                                record.get("session_id")]).encode()).hexdigest()[:48]
+
+
+def _restart_locked(sid, tab, body):
     request_id = body.get("requestId", "")
     if not sessions.conversation_id(request_id):
         raise RestartError("重启请求编号无效", 400)
     previous = sessions.load(sid, suffix=".operation.json")
     if previous.get("requestId") == request_id:
+        if previous.get("permissions") != body.get("permissions"):
+            raise RestartError("此请求编号已用于其他权限设置，请重新确认")
         if previous.get("result"):
             return previous["result"]
         raise RestartError(previous.get("error") or "此请求已执行，请刷新窗口状态后重试")
@@ -371,17 +402,52 @@ def restart_locked(sid, tab, body):
     if preview["running"] and body.get("confirmed") is not True:
         raise RestartError("重启可能中断任务，需要明确确认", 400)
     pane, record = _existing_pane(sid), sessions.load(sid)
-    arguments = resume_arguments(record)
-    launch_env = terminal_launch.session_environment()
+    choice = None
+    restored_mode = None
+    if "permissions" in body:
+        try:
+            choice = terminal_permissions.validate(record["agent"], body["permissions"])
+            if body.get("confirmed") is not True:
+                raise terminal_permissions.PermissionError("修改权限并恢复会话需要明确确认")
+            if terminal_permissions.dangerous(record["agent"], choice) and body.get("confirmDangerous") is not True:
+                raise terminal_permissions.PermissionError("完全访问或跳过权限检查需要再次确认")
+            launch_record = terminal_permissions.rewrite(record, choice)
+        except terminal_permissions.PermissionError as exc:
+            raise RestartError(str(exc), 400) from exc
+    else:
+        launch_record = record
+        # A mode changed natively in Claude is more recent than its startup flags.
+        mode = record.get("permission_mode")
+        if mode == "manual":
+            mode = "default"
+        if record["agent"] == "claude" and mode in terminal_permissions.CLAUDE_MODES:
+            restored_mode = {"mode": mode}
+            try:
+                launch_record = terminal_permissions.rewrite(record, restored_mode)
+            except terminal_permissions.PermissionError as exc:
+                raise RestartError(str(exc)) from exc
+    arguments = resume_arguments(launch_record)
+    launch_env = (terminal_launch.session_environment(use_updates=False)
+                  if body.get("savedVersion") and not preview["running"]
+                  else terminal_launch.session_environment())
     agent = record["agent"]
     binary = launch_env.get("CC_WEB_REAL_" + agent.upper(), "")
+    if body.get("savedVersion") and not preview["running"]:
+        from backend import terminal_continuity
+        try:
+            binary = terminal_continuity.saved_binary(sid, record) or binary
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise RestartError("原运行版本已改变或不可用；未使用新版本代替，请手动检查") from exc
     if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
         raise RestartError("当前原生程序不可用，不会停止旧程序")
     try:
         checked_binary = terminal_preflight.check(agent, binary,
             terminal_launch.guarded_arguments(agent, arguments, launch_env))
-    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        if choice or restored_mode:
+            terminal_permissions.check_values(agent, choice or restored_mode, checked_binary.get("help", ""))
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
         raise RestartError("启动兼容性检查未通过：" + str(exc)) from exc
+    checked_binary.pop("help", None)
     # The install path stays dynamic for future runs. Only this operation uses
     # the artifact whose capabilities were checked before the old task exits.
     overrides = dict(launch_env)
@@ -398,7 +464,7 @@ def restart_locked(sid, tab, body):
     native = sessions.process(record["pid"])
     tracked_children = [item for item in tracked_children if item and (item["comm"] == agent or
                         native and item["pgid"] == native["pgid"] and item["tty"] == native["tty"])]
-    operation = {"requestId": request_id, "started": time.time(), "sessionId": record["session_id"]}
+    operation = {"requestId": request_id, "started": time.time(), "sessionId": record["session_id"], "permissions": choice}
     sessions.save(sid, operation, suffix=".operation.json")
     plan_suffix = "." + sessions.conversation_id(request_id) + ".plan.json"
     plan_path = sessions.runtime_dir() / (sid + plan_suffix)
@@ -484,11 +550,26 @@ def restart_locked(sid, tab, body):
                 latest = opencode_sessions.refresh(sid, latest)
             return latest.get("session_id") == record["session_id"] and sessions.transcript_exists(latest)
 
-        if not _wait(restored, 20):
+        background = bool(body.get("backgroundRestore") and not preview["running"])
+        verified = _wait(restored, 3 if background else 20)
+        if not verified and background:
+            # A trust/login prompt must not hold the serial queue or its input
+            # lock. Show the launched pane without claiming its dialogue loaded.
+            result = {**tab, "alive": True, "attached": 0, "resumed": False,
+                      "resumePending": True, "resumeAgent": agent,
+                      "codexScrollback": agent == "codex" and config.CODEX_SCROLLBACK}
+            operation["result"] = result
+            sessions.save(sid, operation, suffix=".operation.json")
+            return result
+        if not verified:
             raise RestartError("恢复命令已发送，但尚未确认原会话加载；请查看此终端，不会重复启动")
+        if choice and any(terminal_permissions.current(sessions.load(sid))["values"].get(key) != value for key, value in choice.items()):
+            raise RestartError("原会话已加载，但权限模式未确认；请检查原生提示，不会自动继续或再次重启")
         result = {**tab, "alive": True, "attached": 0, "resumed": True,
                   "resumeAgent": agent,
                   "codexScrollback": agent == "codex" and config.CODEX_SCROLLBACK}
+        if choice:
+            result["permissions"] = terminal_permissions.current(sessions.load(sid))
         operation["result"] = result
         sessions.save(sid, operation, suffix=".operation.json")
         return result
@@ -513,14 +594,19 @@ def restart(sid, tab, body):
 def snapshot_existing():
     """Metadata only: adopt provable identities without keys, signals or account calls."""
     counts = {"live": 0, "identified": 0, "needs_binding": 0, "unavailable": 0}
-    for tab in tmux_mgr.list_sessions():
+    from backend import terminal_continuity
+    live = tmux_mgr.list_sessions()
+    terminal_continuity.missing({tab["id"] for tab in live})
+    for tab in live:
         sid = tab["id"]
         counts["live"] += 1
         try:
             with sessions.lock(sid, "operation", blocking=False):
+                terminal_continuity.discard_exited(sid)
                 pane = _existing_pane(sid)
                 foreground = _foreground(pane) if pane else None
                 if not foreground:
+                    terminal_continuity.disarm(sid)
                     continue
                 record = _record(sid, tab, pane, foreground)
                 if sessions.transcript_exists(record):
@@ -530,6 +616,7 @@ def snapshot_existing():
                                 and sessions.load(sid, suffix=".saved.json") != latest):
                             sessions.remember(sid, latest)
                     counts["identified"] += 1
+                    terminal_continuity.observe(sid, record)
                 elif record["agent"] in {"claude", "opencode"} and not record.get("hook_seen"):
                     counts["needs_binding"] += 1
                 else:

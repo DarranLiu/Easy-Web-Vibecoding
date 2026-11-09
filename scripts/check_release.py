@@ -28,7 +28,7 @@ def check(paths):
     for path in paths:
         relative = path.relative_to(ROOT).as_posix()
         parts = path.relative_to(ROOT).parts
-        if (any(part in {'.cc-web-images', 'backups', 'certs', '__pycache__', '.claude', '.codex', '.aws'} for part in parts)
+        if (any(part in {'.cc-web-images', '.cc-web-uploads', 'backups', 'certs', '__pycache__', '.claude', '.codex', '.aws'} for part in parts)
                 or (path.name.startswith('.env') and path.name != '.env.example')
                 or path.suffix in {'.pem', '.key', '.crt', '.sqlite3', '.log', '.pyc'}):
             errors.append((relative, 'private runtime artifact'))

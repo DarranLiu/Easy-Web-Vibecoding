@@ -4,6 +4,11 @@ from pathlib import Path
 
 SCREENSHOTS = (
     "workspace.png",
+    "screens.png",
+    "session-lookup.png",
+    "permissions.png",
+    "reference-files.png",
+    "workspace-git.png",
     "updates.png",
     "restart.png",
     "workspace-files.png",

@@ -1,0 +1,240 @@
+/* v134: the supplied Fluent/macOS reference, backed by the existing workspace.
+   ANSI colors, input, saved widths and native terminal lifecycle stay intact. */
+html[data-ui="bridge"] {
+  --sb-w: 272px;
+  --deck-w: 340px;
+  --action: #0067c0;
+  --action-fg: #ffffff;
+  --focus-ring: #0067c0;
+}
+html[data-ui="bridge"]:not([data-terminal-style="glass"]) {
+  --desktop-bg: #f3f4f6;
+  --shell-bg: #fbfbfc;
+  --sidebar-bg: #fbfbfc;
+  --ws-group-bg: #f0f1f3;
+  --ws-child-bg: #fbfbfc;
+  --content-bg: #f3f4f6;
+  --raised: #ffffff;
+  --layer-2: #f3f4f6;
+  --text: #18181b;
+  --text-2: #52525b;
+  --text-3: #616872;
+  --separator: #d9dce0;
+  --separator-2: #e6e8eb;
+  --hover: #ebedf0;
+  --hover-2: #e1e5e9;
+  --accent: #0067c0;
+  --accent-soft: #e7f0f9;
+  --control-bg: #ffffff;
+  --control-bd: #c4c8ce;
+  --term-bg: #ffffff;
+}
+html[data-ui="bridge"][data-theme="dark"]:not([data-terminal-style="glass"]) {
+  --desktop-bg: #111214;
+  --shell-bg: #18191c;
+  --sidebar-bg: #18191c;
+  --ws-group-bg: #202226;
+  --ws-child-bg: #18191c;
+  --content-bg: #111214;
+  --raised: #202226;
+  --layer-2: #1b1d20;
+  --text: #eceef1;
+  --text-2: #a2a8b0;
+  --text-3: #959da7;
+  --separator: #33373d;
+  --separator-2: #292c31;
+  --hover: #282b30;
+  --hover-2: #32363d;
+  --accent: #58a6ff;
+  --accent-soft: #1e2c40;
+  --control-bg: #202226;
+  --control-bd: #4c535e;
+  --term-bg: #0c0d0f;
+  --focus-ring: #58a6ff;
+}
+html[data-ui="bridge"] .workbench-label { display: none; }
+html[data-ui="bridge"] #panes { padding: 12px; gap: 10px; background: var(--content-bg); }
+html[data-ui="bridge"] #panes > .pane {
+  border: 1px solid var(--separator-2); border-radius: 8px;
+  box-shadow: 0 2px 8px #00000015; background: var(--term-bg);
+}
+html[data-ui="bridge"] #panes > .pane.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-soft); }
+html[data-ui="bridge"] #panes > .pane.ws-unread-pane::after { box-sizing: border-box; }
+html[data-ui="bridge"] .pane-bar { height: 32px; min-height: 32px; background: var(--sidebar-bg); padding: 0 10px; }
+html[data-ui="bridge"] .pane.focused > .pane-bar { background: var(--sidebar-bg); }
+html[data-ui="bridge"] .pane-host { padding: 10px 12px 6px; }
+html[data-ui="bridge"] .pane-name { font-weight: 500; }
+html[data-ui="bridge"] .pane .status-dot { width: 6px; height: 6px; box-shadow: none; }
+html[data-ui="bridge"] .gutter::after { background: transparent; }
+html[data-ui="bridge"] .gutter:hover::after, html[data-ui="bridge"] .gutter.dragging::after { background: var(--accent); }
+html[data-ui="bridge"] .ws-tree-children { border-color: var(--separator-2); }
+html[data-ui="bridge"] .ws-workspace.has-active-session { box-shadow: none; }
+html[data-ui="bridge"] .ws-workspace.has-active-session .ws-workspace-main b { color: var(--text); }
+html[data-ui="bridge"] .workbench-context {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 8px 2px 10px; border-bottom: 1px solid var(--separator-2); font-size: 11px;
+}
+html[data-ui="bridge"] .workbench-context > span:first-child { flex: none; color: var(--text-3); }
+html[data-ui="bridge"] .workbench-context #workspace-project { min-width: 0; margin: 0; padding: 0; background: transparent; font-size: 12px; }
+html[data-ui="bridge"] .workbench-context[hidden] { display: none; }
+html[data-ui="bridge"] .ws-sidebar { gap: 10px; padding: 12px; }
+html[data-ui="bridge"] .ws-deck-tabs { border-bottom: 1px solid var(--separator-2); }
+html[data-ui="bridge"] .ws-deck-content { background: var(--sidebar-bg); }
+html[data-ui="bridge"] .ws-deck-tabs .ws-icon[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+html[data-ui="bridge"] #workspace-footer { font-size: 11px; }
+html[data-ui="bridge"] :is(.modal-box, .ui-dialog) { border-color: var(--separator); }
+
+@media (min-width: 821px) {
+  html[data-ui="bridge"] #titlebar { display: none; }
+  html[data-ui="bridge"] #workspace-header { height: 48px; min-height: 48px; padding: 0 12px; gap: 12px; overflow: hidden; }
+  html[data-ui="bridge"] .workspace-crumb { flex: 0 1 auto; min-width: 0; gap: 10px; }
+  html[data-ui="bridge"] .app-brand { gap: 8px; flex: none; }
+  html[data-ui="bridge"] .app-brand-name { font-size: 13px; }
+  html[data-ui="bridge"] .app-brand-icon { width: 22px; height: 22px; }
+  html[data-ui="bridge"] #ws-layout-user { max-width: 132px; min-width: 30px; font-size: 10px; height: 26px; border: 1px solid var(--separator); }
+  html[data-ui="bridge"] .workbench-sync { display: flex; align-items: center; min-width: 0; max-width: 240px; gap: 6px; }
+  html[data-ui="bridge"] #ws-save-indicator { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0; font-size: 11px; }
+  html[data-ui="bridge"] #ws-save-indicator:not(:empty)::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: currentColor; }
+  html[data-ui="bridge"] .ws-layout-sync-action { flex: none; min-height: 28px; padding: 0 6px; font-size: 11px; }
+  html[data-ui="bridge"] .workbench-search-group { display: flex; flex: 1 1 220px; min-width: 120px; max-width: 480px; gap: 6px; margin: 0 auto; }
+  html[data-ui="bridge"] #workspace-header .workbench-search {
+    display: flex; align-items: center; justify-content: flex-start; gap: 8px;
+    width: auto; min-width: 100px; flex: 1; padding: 0 10px; color: var(--text-2);
+    background: var(--raised); border: 1px solid var(--separator); font: inherit; font-size: 12px;
+  }
+  html[data-ui="bridge"] .workbench-search .workbench-label { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  html[data-ui="bridge"] .workbench-search .ui-icon { flex: none; }
+  html[data-ui="bridge"] #workspace-header .workspace-actions { flex: none; gap: 5px; }
+  html[data-ui="bridge"] #workspace-header .header-divider { display: none; }
+  html[data-ui="bridge"] .ws-sidebar > .ws-summary { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+  html[data-ui="bridge"] .ws-sidebar > .ws-summary:has(button:not([hidden])) { padding-bottom: 6px; }
+  html[data-ui="bridge"] #theme-toggle { min-width: 32px; width: 32px; height: 32px; overflow: hidden; white-space: nowrap; padding: 0; font-size: 0; }
+  html[data-ui="bridge"] #theme-toggle .ui-icon { width: 16px; height: 16px; }
+  html[data-ui="bridge"] :is(#btn-gpu, #btn-versions, #ws-deck-toggle, #workbench-lookup) {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    width: auto; min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid var(--separator);
+    background: var(--raised); color: var(--text-2); font: inherit; font-size: 12px;
+  }
+  html[data-ui="bridge"] #ws-screen-bar { height: 44px; min-height: 44px; padding: 0 12px; gap: 8px; background: var(--sidebar-bg); }
+  html[data-ui="bridge"] #ws-screen-strip { flex: 1 1 240px; min-width: 140px; }
+  html[data-ui="bridge"] #ws-screen-tabs > button { height: 30px; border: 1px solid transparent; font-size: 12px; }
+  html[data-ui="bridge"] #ws-screen-tabs > button[aria-selected="true"] { color: var(--text); background: var(--raised); border-color: var(--separator); box-shadow: none; }
+  html[data-ui="bridge"] #ws-screen-tools { padding: 0 6px 0 0; border: 0; border-right: 1px solid var(--separator); gap: 0; }
+  html[data-ui="bridge"] #ws-screen-tools .ws-icon { width: 28px; min-width: 28px; height: 30px; padding: 0; }
+  html[data-ui="bridge"] #ws-screen-tools span { display: none; }
+  html[data-ui="bridge"] .workbench-actions, html[data-ui="bridge"] .ws-primary-actions { display: flex; align-items: center; flex: none; gap: 6px; padding: 0; margin: 0; border: 0; }
+  html[data-ui="bridge"] .workbench-actions :is(.tb-btn, .hdr-btn) {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    width: auto; min-width: 32px; height: 32px; padding: 0 9px;
+    border: 1px solid var(--separator); border-radius: 6px; background: var(--raised);
+    font: inherit; font-size: 12px; color: var(--text-2);
+  }
+  html[data-ui="bridge"] .workbench-actions :is(.tb-btn, .hdr-btn):hover:not(:disabled) { background: var(--hover); color: var(--text); }
+  html[data-ui="bridge"] .workbench-actions #header-new { background: var(--action); border-color: var(--action); color: #ffffff; }
+  html[data-ui="bridge"] .workbench-actions #header-new:hover { background: #0078d4; }
+  html[data-ui="bridge"] .workbench-actions .workbench-label { display: inline; }
+  html[data-ui="bridge"] .workbench-actions :is(#btn-copy, #btn-img) { width: 32px; padding: 0; }
+  html[data-ui="bridge"] .workbench-directions { display: flex; gap: 0; padding: 2px; border: 1px solid var(--separator); border-radius: 6px; }
+  html[data-ui="bridge"] .workbench-actions .workbench-directions button { width: 28px; min-width: 28px; height: 26px; padding: 0; border: 0; border-radius: 4px; background: transparent; }
+  html[data-ui="bridge"] .workbench-directions button[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+  html[data-ui="bridge"] .workbench-directions .workbench-label { display: none; }
+  html[data-ui="bridge"] #workspace-header #btn-gpu { display: inline-flex; }
+  html[data-ui="bridge"] #term-header { min-height: 34px; padding: 2px 12px; background: var(--content-bg); }
+  html[data-ui="bridge"] #term-header #btn-dir { display: none; }
+  html[data-ui="bridge"] .ws-sidebar-resize { top: 0; }
+  html[data-ui="bridge"] .ws-deck-head { height: 40px; min-height: 40px; }
+}
+@media (min-width: 1350px) {
+  html[data-ui="bridge"] :is(#btn-gpu, #btn-versions, #ws-deck-toggle, #workbench-lookup) .workbench-label { display: inline; }
+}
+/* Match the reference's rendered density, not Tailwind's 16px-root class names.
+   Use real dimensions: CSS zoom would desynchronize terminal pointer geometry. */
+@media (min-width: 821px) {
+  html[data-ui="bridge"] body { font-size: 12px; line-height: 1.4; }
+  html[data-ui="bridge"] #workspace-header { height: 40px; min-height: 40px; padding: 0 10px; gap: 10px; }
+  html[data-ui="bridge"] .app-brand-name { font-size: 12px; }
+  html[data-ui="bridge"] .app-brand-icon { width: 20px; height: 20px; }
+  html[data-ui="bridge"] #workspace-header :is(.tb-btn, #btn-gpu, #btn-versions, #ws-deck-toggle, #workbench-lookup, #theme-toggle) { height: 28px; min-height: 28px; }
+  html[data-ui="bridge"] #workspace-header :is(.workbench-search, #btn-gpu, #btn-versions, #ws-deck-toggle, #workbench-lookup) { font-size: 11px; }
+  html[data-ui="bridge"] #ws-screen-bar { height: 36px; min-height: 36px; padding: 0 10px; }
+  html[data-ui="bridge"] #ws-screen-tabs > button { height: 28px; padding: 0 9px; font-size: 11px; }
+  html[data-ui="bridge"] #ws-screen-tabs small { font-size: 10px; }
+  html[data-ui="bridge"] #ws-screen-add { height: 28px; }
+  html[data-ui="bridge"] #ws-screen-tools .ws-icon { height: 28px; }
+  html[data-ui="bridge"] .workbench-actions, html[data-ui="bridge"] .ws-primary-actions { gap: 4px; }
+  html[data-ui="bridge"] .workbench-actions :is(.tb-btn, .hdr-btn) { height: 28px; min-height: 28px; padding: 0 8px; font-size: 11px; }
+  html[data-ui="bridge"] .workbench-actions :is(#btn-copy, #btn-img) { padding: 0; }
+  html[data-ui="bridge"] .workbench-actions .workbench-directions button { height: 24px; min-height: 24px; padding: 0; }
+  html[data-ui="bridge"] :is(#workspace-header, #ws-screen-bar, #term-header, .pane-bar, .ws-sidebar, .ws-deck-tabs) .ui-icon { width: 14px; height: 14px; }
+  html[data-ui="bridge"] #term-header { min-height: 30px; padding: 1px 8px; gap: 3px; }
+  html[data-ui="bridge"] #term-header .hdr-btn { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
+  html[data-ui="bridge"] #term-header .sizer { height: 26px; }
+  html[data-ui="bridge"] #term-header .sizer button { height: 24px; }
+  html[data-ui="bridge"] #panes { padding: 8px; gap: 8px; }
+  html[data-ui="bridge"] .pane-bar { height: 28px; min-height: 28px; padding: 0 8px; font-size: 11px; }
+  html[data-ui="bridge"] .pane-host { padding: 6px 8px 4px; }
+  html[data-ui="bridge"] .ws-sidebar { padding: 8px 10px; gap: 6px; }
+  html[data-ui="bridge"] .ws-tree-search { min-height: 28px; padding: 4px 8px; }
+  html[data-ui="bridge"] .ws-tree-search input { font-size: 11px; }
+  html[data-ui="bridge"] .workbench-context { padding: 5px 2px 7px; font-size: 10px; }
+  html[data-ui="bridge"] .workbench-context #workspace-project { font-size: 11px; }
+  html[data-ui="bridge"] .ws-sidebar > .ws-summary:has(button:not([hidden])) { padding-bottom: 2px; }
+  html[data-ui="bridge"] .ws-tree-group { margin-bottom: 6px; }
+  html[data-ui="bridge"] .ws-workspace { min-height: 40px; padding: 5px 7px; }
+  html[data-ui="bridge"] .ws-workspace-main b, html[data-ui="bridge"] .ws-session-name { font-size: 11px; }
+  html[data-ui="bridge"] .ws-workspace-main small { font-size: 10px; margin-top: 2px; }
+  html[data-ui="bridge"] .ws-session { grid-template-rows: 24px 24px; padding: 0 3px 2px; }
+  html[data-ui="bridge"] .ws-session-open { height: 24px; min-height: 24px; padding: 2px 4px; }
+  html[data-ui="bridge"] .ws-session > .ws-icon { height: 24px; min-height: 24px; }
+  html[data-ui="bridge"] .ws-stopped-toggle { min-height: 28px; font-size: 10px; }
+  html[data-ui="bridge"] .ws-sidebar-actions { gap: 6px; padding-top: 6px; }
+  html[data-ui="bridge"] .ws-sidebar-actions .ws-icon { width: 28px; height: 28px; }
+  html[data-ui="bridge"] .side-foot { min-height: 32px; }
+  html[data-ui="bridge"] .side-foot .link-btn { padding: 4px; }
+  html[data-ui="bridge"] #workspace-footer, html[data-ui="bridge"] body.aux-hidden #workspace-footer { height: 28px; min-height: 28px; }
+  html[data-ui="bridge"] #workspace-footer .keycap { font-size: 10px; }
+  html[data-ui="bridge"] .ws-deck-head { height: 34px; min-height: 34px; }
+  html[data-ui="bridge"] .ws-deck-title { font-size: 12px; }
+  html[data-ui="bridge"] .ws-deck-tabs { padding: 4px 6px; }
+  html[data-ui="bridge"] .ws-deck-tabs .ws-icon { height: 30px; }
+  html[data-ui="bridge"] .ws-row { min-height: 30px; padding: 4px 10px; font-size: 11px; }
+  html[data-ui="bridge"] .ws-setting { min-height: 38px; font-size: 11px; }
+  html[data-ui="bridge"] :is(.ws-agent-meta, .ws-phase, .ws-row small, .ws-split-row small) { font-size: 10px; }
+  html[data-ui="bridge"] .modal-head { min-height: 44px; padding: 8px 14px; }
+  html[data-ui="bridge"] :is(.modal-head h3, .ui-dialog-title) { font-size: 14px; }
+  html[data-ui="bridge"] .modal-foot { min-height: 44px; padding: 8px 14px; }
+  html[data-ui="bridge"] :is(.btn-sm, .ui-btn) { min-height: 30px; font-size: 11px; }
+  html[data-ui="bridge"] :is(.modal-box, .ui-dialog) :is(input:not([type="checkbox"]):not([type="range"]):not([type="radio"]), select) { font-size: 12px; }
+  html[data-ui="bridge"] .ws-split-name b { font-size: 12px; }
+  html[data-ui="bridge"] .ws-split-row { padding: 7px 12px; }
+}
+@media (min-width: 821px) and (max-width: 1199px) {
+  html[data-ui="bridge"] .workbench-actions .workbench-label { display: none; }
+  html[data-ui="bridge"] .workbench-actions :is(.tb-btn, .hdr-btn):not(#header-new):not(#header-split):not(.workbench-command) { width: 32px; padding: 0; }
+  html[data-ui="bridge"] .workbench-actions :is(#header-new, #header-split) .workbench-label { display: inline; }
+  html[data-ui="bridge"] #ws-layout-user { width: 30px; padding: 0; justify-content: center; }
+  html[data-ui="bridge"] #ws-layout-user span { display: none; }
+  html[data-ui="bridge"] #workspace-header { gap: 8px; }
+  html[data-ui="bridge"] .workbench-sync { max-width: 110px; }
+  html[data-ui="bridge"] .ws-layout-sync-action { font-size: 0; width: 30px; }
+}
+@media (min-width: 821px) and (max-width: 899px) {
+  html[data-ui="bridge"] #ws-screen-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 34px 34px; height: 68px; min-height: 68px; gap: 0 8px; }
+  html[data-ui="bridge"] #ws-screen-strip { grid-area: 1 / 1; width: 100%; }
+  html[data-ui="bridge"] #ws-screen-tools { grid-area: 1 / 2; border-right: 0; }
+  html[data-ui="bridge"] .workbench-actions { grid-area: 2 / 1 / 3 / 3; justify-content: flex-end; }
+}
+@media (max-width: 820px) {
+  html[data-ui="bridge"] #topbar { grid-template-columns: repeat(5, minmax(0, 1fr)) 68px; }
+  html[data-ui="bridge"] #codex-quota-m .quota-battery-reset { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  html[data-ui="bridge"] #panes { padding: 6px; gap: 6px; }
+  html[data-ui="bridge"] .pane-bar { height: 44px; min-height: 44px; }
+  html[data-ui="bridge"] .pane-host { padding: 4px; }
+  html[data-ui="bridge"] #panes > .pane { border-radius: 6px; }
+}
+@media (forced-colors: active) {
+  html[data-ui="bridge"] #panes > .pane { background: Canvas; border: 1px solid CanvasText; }
+  html[data-ui="bridge"] #panes > .pane.focused { border: 2px solid Highlight; box-shadow: none; }
+  html[data-ui="bridge"] :is(.workbench-actions, .workbench-search-group) button { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
+  html[data-ui="bridge"] #ws-screen-tabs > button[aria-selected="true"] { border: 2px solid Highlight; }
+}

@@ -25,14 +25,23 @@ This is not a release log. It records concrete failures encountered while using 
 | Codex output made the input background flash | Automatic output-follow is separated from manual history scrolling; brief TUI redraws retain confirmed tint and unchanged sizes no longer force a full refresh. |
 | Copying accidentally cancelled the agent | Web Ctrl+C/Ctrl+Shift+C and Mac Cmd+C only copy selection. No selection or clipboard failure never falls through to SIGINT; interruption requires a separate confirmed command. |
 | Codex footer information was clipped by terminal height | Account limits live in a separate row below the terminal; the native footer keeps model, state, and context. |
-| The usage bar was too prominent and repeated in every pane | One thin indicator appears only for the currently focused Codex pane. |
+| The usage bar was too prominent and repeated in every pane | A compact toolbar battery shows the focused Codex quota and relative reset countdown without taking terminal rows. |
 | Web usage stayed stale after the desktop client changed | The backend returns the authoritative next-refresh time; the frontend no longer adds a second cache clock. |
 | Several pages or backend processes could query usage together | HTTP/HTTPS processes share a cache and file lock; hidden pages and unfocused tools do not schedule requests. |
 | A phone keyboard covered the terminal cursor | Visual Viewport changes resize the terminal and a second correction runs after the keyboard animation. |
 | Switching mobile sessions meant searching again | A recent-session picker switches the single visible terminal. A native-command menu and auxiliary Enter/arrows avoid opening the keyboard for menu navigation. |
-| IME input sometimes lost characters | Composition events remain separate from ordinary key events. |
+| IME input sometimes lost characters | Composition and ordinary input are deduplicated; buffered transport preserves input order and does not blindly replay uncertain input into another session. |
 | Copy failed on a plain-HTTP LAN origin | HTTPS uses the Clipboard API; a controlled fallback remains for ordinary HTTP. |
 | A TCP tunnel made every source IP look local | Trusted proxy information can restore the source; otherwise client ID and device data provide a fallback count. |
 | Tokens appeared in WebSocket or download URLs | Login now issues a signed, time-limited HttpOnly session proof; the master token stays out of browser storage, URLs, history, and default proxy logs. |
 
 The shared principle is that a terminal is a work tool: stable, recoverable, and quiet, without requiring users to memorize browser-specific rituals.
+
+## Saved screens and everyday navigation
+
+- Reopening a browser used to lose the split arrangement: named screens now save with the Token-associated profile, separately for desktop and mobile.
+- A session could appear on several screens: cross-screen moves and split selection enforce one location within a layout and show where it is open.
+- Concurrent browsers could block screen controls or overwrite layouts: revision checks, local recovery journals and explicit reload/copy actions retain recoverable state.
+- Finding a stopped conversation required guessing: lookup by exact conversation ID and verified restoration avoid silently starting a replacement.
+- Common actions were buried: the compact workbench exposes permissions, uploads, path previews, version management and focused-terminal actions.
+- Reusing screenshots exposed irrelevant details: every README preview now uses isolated synthetic data and the current frontend, in the matching language.

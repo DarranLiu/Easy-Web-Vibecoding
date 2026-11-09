@@ -32,6 +32,14 @@ Upstream: <https://github.com/rsms/inter> and <https://github.com/JetBrains/JetB
 
 `frontend/assets/mist-coast.png` was independently AI-generated for this project, not copied from the UI references. Its provenance and rendering notes are in `frontend/assets/README.md`.
 
+## File preview libraries
+
+Markdown-it 15.0.3 and Papa Parse 5.7.0 use the MIT License. DOMPurify 3.4.17
+is distributed here under its Apache-2.0 option. Their unmodified browser builds
+are bundled locally; no CDN is required. See `frontend/vendor/file-preview-NOTICES.txt`,
+`markdown-it-LICENSE.txt`, `markdown-it-THIRD-PARTY.txt`, `papaparse-LICENSE.txt`
+and `DOMPurify-LICENSE.txt` in that directory for upstream notices.
+
 ## Design references
 
 Workspace organization was informed by [wmux](https://github.com/openwong2kim/wmux); optional effects were inspired by Ghostty community themes. This release does not bundle their native application code, icons or shaders, and is not an official distribution or endorsement of those projects.

@@ -16,7 +16,7 @@ _VALUE_OPTIONS = {
     "-i", "--image", "-C", "--cd", "--add-dir", "-s", "--sandbox", "-a", "--ask-for-approval",
     "--remote-auth-token-env", "--agent", "--settings", "--session-id", "--log-level",
     "--hostname", "--port", "--sock", "--listen", "--code-mode-host", "-r", "--resume",
-    "--session", "--prompt", "--replay-limit",
+    "--session", "--prompt", "--replay-limit", "--permission-mode",
 }
 
 
@@ -56,7 +56,7 @@ def guarded_arguments(agent, args, env):
         if env.get("CC_WEB_CODEX_SCROLLBACK", "1") != "0":
             defaults.append("--no-alt-screen")
         catalog = env.get("CC_WEB_CODEX_MODEL_CATALOG", "")
-        if catalog:
+        if catalog and catalog != "auto":
             defaults.extend(["-c", "model_catalog_json=" + json.dumps(catalog)])
         status = json.loads(env.get("CC_WEB_CODEX_STATUS_ITEMS", "[]"))
         if status:
@@ -152,6 +152,7 @@ def session_environment(use_updates=True):
            "CC_WEB_OLD_ENV": original_init("ENV"),
            "CC_WEB_CODEX_SCROLLBACK": "1" if config.CODEX_SCROLLBACK else "0",
            "CC_WEB_CODEX_MODEL_CATALOG": config.CODEX_MODEL_CATALOG,
+           "CC_WEB_CODEX_CATALOG_MODE": "auto" if config.CODEX_MODEL_CATALOG == "auto" else "custom" if config.CODEX_MODEL_CATALOG else "native",
            "CC_WEB_CODEX_STATUS_ITEMS": json.dumps(config.CODEX_STATUS_LINE)}
     for key in DIRECTORY_ENV:
         if key in os.environ:
@@ -259,6 +260,18 @@ def main():
     except AttachmentBlocked as exc:
         print(str(exc), file=sys.stderr)
         return 64
+    if agent == "codex" and agent_sessions.interactive(agent, native_args):
+        if __package__:
+            from backend import codex_catalog
+        else:
+            import codex_catalog
+        try:
+            binary, native_args, environment = codex_catalog.prepare(binary, native_args, os.environ)
+            os.environ.update(environment)
+            arguments = guarded_arguments(agent, native_args, os.environ)
+        except (OSError, RuntimeError, ValueError):
+            print("Codex launch preparation changed; no new agent was started. The saved conversation was retained.", file=sys.stderr)
+            return 64
     if agent in AGENTS:
         try:
             monitored = agent_sessions.prepare_launch(agent, native_args)

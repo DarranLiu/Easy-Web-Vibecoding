@@ -4,12 +4,36 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from functools import lru_cache
+from threading import RLock
+
+_lock = RLock()
 
 
 def check(agent, binary, arguments):
     path = str(Path(binary).resolve(strict=True))
     stat = os.stat(path)
     identity = [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
+    with _lock:
+        output = _help(agent, path, tuple(identity))
+    supported = set(re.findall(r"(?<![\w-])--[a-zA-Z][\w-]*|(?<![\w-])-[a-zA-Z]\b", output))
+    required = {"codex": {"--no-daemon"}, "claude": {"--resume", "--settings"},
+                "opencode": {"--session", "--port", "--hostname"}}[agent]
+    for argument in arguments:
+        name = argument.split("=", 1)[0]
+        if re.fullmatch(r"--[a-zA-Z][\w-]*|-[a-zA-Z]", name):
+            required.add(name)
+    missing = required - supported
+    if missing:
+        raise RuntimeError("程序缺少恢复所需参数 " + ", ".join(sorted(missing)) + "，旧任务未退出")
+    current = os.stat(path)
+    if identity != [current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns]:
+        raise RuntimeError("检查期间程序又更新了，请重试；旧任务未退出")
+    return {"path": path, "identity": identity, "help": output}
+
+
+@lru_cache(maxsize=32)
+def _help(agent, path, identity):
     # Help must not load the user's account, hooks, projects, or remote models.
     with tempfile.TemporaryDirectory(prefix="webcc-cli-preflight-") as temporary:
         env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": temporary,
@@ -26,17 +50,7 @@ def check(agent, binary, arguments):
             if result.returncode:
                 raise RuntimeError("程序帮助检查失败，旧任务未退出")
             outputs.append(result.stdout + result.stderr)
-        supported = set(re.findall(r"(?<![\w-])--[a-zA-Z][\w-]*|(?<![\w-])-[a-zA-Z]\b", "\n".join(outputs)))
-        required = {"codex": {"--no-daemon"}, "claude": {"--resume", "--settings"},
-                    "opencode": {"--session", "--port", "--hostname"}}[agent]
-        for argument in arguments:
-            name = argument.split("=", 1)[0]
-            if re.fullmatch(r"--[a-zA-Z][\w-]*|-[a-zA-Z]", name):
-                required.add(name)
-        missing = required - supported
-        if missing:
-            raise RuntimeError("新版程序缺少恢复所需参数 " + ", ".join(sorted(missing)) + "，旧任务未退出")
     current = os.stat(path)
-    if identity != [current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns]:
+    if identity != (current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns):
         raise RuntimeError("检查期间程序又更新了，请重试；旧任务未退出")
-    return {"path": path, "identity": identity}
+    return "\n".join(outputs)

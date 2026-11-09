@@ -21,7 +21,10 @@ if "--version" in args:
     print(("codex-cli " if agent == "codex" else "") + FAKE_VERSION)
     sys.exit(0)
 if "--help" in args:
-    print("--no-daemon --no-alt-screen --resume --settings --permission-mode --sandbox --ask-for-approval --model -m -s -a -c -C --session --port --hostname --config --profile -p --enable --disable")
+    print("--no-daemon --no-alt-screen --resume --settings --model -m -s -a -c -C --session --port --hostname --config --profile -p --enable --disable")
+    print("  --ask-for-approval <policy>\n    Possible values: on-request, never")
+    print("  --sandbox <mode>\n    Possible values: read-only, workspace-write, danger-full-access")
+    print("  --permission-mode <mode>\n    choices: default, acceptEdits, plan, auto, dontAsk, bypassPermissions")
     sys.exit(0)
 identifier = str(uuid.uuid4())
 if agent == "opencode":
@@ -41,8 +44,8 @@ if not path.exists():
 stream = path.open("a")
 if agent == "opencode":
     with sqlite3.connect(home / "opencode.db") as db:
-        db.execute("CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT)")
-        db.execute("INSERT OR REPLACE INTO session VALUES (?, ?, NULL)", (identifier, os.getcwd()))
+        db.execute("CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, directory TEXT, parent_id TEXT, title TEXT, time_updated INTEGER)")
+        db.execute("INSERT OR REPLACE INTO session VALUES (?, ?, NULL, ?, ?)", (identifier, os.getcwd(), "Offline conversation", int(time.time() * 1000)))
     observation = os.environ.get("CC_WEB_OPENCODE_OBSERVATION")
     if observation:
         def heartbeat():
@@ -66,10 +69,15 @@ def emit_start(source="startup"):
             subprocess.run(shlex.split(hook["command"]), input=json.dumps({
                 "session_id": identifier, "transcript_path": str(path), "cwd": os.getcwd(),
                 "hook_event_name": "SessionStart", "source": source,
+                **({"permission_mode": args[args.index("--permission-mode") + 1]} if "--permission-mode" in args else {}),
             }), text=True, check=True)
 
 if agent == "claude" and "--settings" in args:
     settings = json.loads(Path(args[args.index("--settings") + 1]).read_text())
+    if Path(".offline-require-trust").is_file():
+        print("OFFLINE_AWAITING_CONFIRMATION", flush=True)
+        if sys.stdin.readline().strip() != "CONFIRM_SYNTHETIC":
+            sys.exit(1)
     emit_start("resume" if flag in args else "startup")
 attributes = termios.tcgetattr(0)
 tty.setraw(0)

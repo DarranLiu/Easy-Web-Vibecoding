@@ -124,23 +124,23 @@ def running_version(sid):
         pane = terminal_restart._existing_pane(sid)
         foreground = terminal_restart._foreground(pane) if pane else None
         if not foreground:
-            return {"agent": None, "version": None, "reason": "当前没有运行原生终端程序"}
+            return {"agent": None, "version": None, "state": "idle", "reason": "当前没有运行原生终端程序"}
         executable = f"/proc/{foreground['pid']}/exe"
         name = Path(os.readlink(executable).removesuffix(" (deleted)")).name
         native_name = name in {foreground["comm"], "claude-code", "codex-cli"} or (
             foreground["comm"] == "claude" and version_key(name) is not None)
         if not native_name:
-            return {"agent": foreground["comm"], "version": None, "reason": "无法确认运行中程序的版本"}
+            return {"agent": foreground["comm"], "version": None, "state": "running", "reason": "无法确认运行中程序的版本"}
         with open(executable, "rb") as stream:
             if stream.read(4) != b"\x7fELF":
                 raise ValueError
         value = installed_version(foreground["comm"], executable)
         if not sessions.same_process(foreground):
             raise ValueError
-        return {"agent": foreground["comm"], "version": value,
+        return {"agent": foreground["comm"], "version": value, "state": "running",
                 "reason": "" if value else "运行版本无法读取"}
     except (OSError, ValueError, RuntimeError):
-        return {"agent": None, "version": None, "reason": "无法识别此窗口的运行程序"}
+        return {"agent": None, "version": None, "state": "unknown", "reason": "无法识别此窗口的运行程序"}
 
 
 def _url(url):
@@ -281,6 +281,10 @@ def _job(agent):
     if job.get("phase") in BUSY_PHASES:
         try:
             with sessions.lock(agent, "update", root=_root(), blocking=False):
+                latest = _load(agent, ".job.json")
+                if latest.get("phase") not in BUSY_PHASES or latest.get("requestId") != job.get("requestId"):
+                    return latest
+                job = latest
                 active = _load(agent, ".active.json")
                 if active.get("requestId") == job.get("requestId") and shared.matches(active):
                     job["installed"] = True

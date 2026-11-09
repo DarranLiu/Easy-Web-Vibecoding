@@ -47,12 +47,22 @@ class ReleaseContractTests(unittest.TestCase):
             text = (ROOT / name).read_text()
             self.assertIn(guide, text)
             self.assertIn('v0.2.0', text)
+            self.assertIn('v0.3.0', text)
             self.assertIn('updates.png', text)
             self.assertIn('restart.png', text)
         english = (ROOT / 'docs/UPDATES.en.md').read_text()
         self.assertIn('does not upgrade code inside', (ROOT / 'README.md').read_text())
         self.assertIn('There is no built-in Git self-updater', english)
         self.assertIn('In-progress work may be interrupted', english)
+
+    def test_reference_upload_cache_is_not_publishable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / '.cc-web-uploads' / 'notes.txt'
+            path.parent.mkdir()
+            path.write_text('private upload')
+            with patch.object(check_release, 'ROOT', root):
+                self.assertTrue(check_release.check([path]))
 
     def test_all_new_bundled_assets_have_license_notices(self):
         notices = (ROOT / 'THIRD_PARTY_NOTICES.md').read_text()

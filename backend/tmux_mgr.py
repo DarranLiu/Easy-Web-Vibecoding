@@ -1,7 +1,7 @@
 """Thin wrapper over tmux — tmux is the live-process layer.
 
 Each CC terminal is a tmux session named ``cc_<id>``. The session runs the
-user's shell, into which we launch the selected agent. Because the process lives in
+user's shell, into which we launch ``claude``. Because the process lives in
 tmux (not in this backend), it survives the browser/WebSocket disconnecting and
 this backend restarting. Killing the session stops the process; the *tab* that
 remembers it lives in store.py so it can be restarted later.
@@ -40,7 +40,8 @@ def start_session(sid: str, cwd: str, launch_cmd: str = "", opts: dict = None, e
         return name  # already running
 
     try:
-        environment = terminal_launch.session_environment()
+        environment = (terminal_launch.session_environment(use_updates=False)
+                       if environment_override is not None else terminal_launch.session_environment())
     except (OSError, RuntimeError) as exc:
         raise RuntimeError("Unable to prepare isolated web terminal launchers") from exc
     environment["CC_WEB_SESSION_ID"] = sid
@@ -68,9 +69,14 @@ def start_session(sid: str, cwd: str, launch_cmd: str = "", opts: dict = None, e
 def list_sessions() -> list:
     """Live tmux sessions with the cc_ prefix and their metadata."""
     fmt = "\t".join(["#{session_name}", "#{@cwd}", "#{@mode}", "#{@created}", "#{@type}", "#{session_attached}", "#{@web_scrollback}"])
-    r = _tmux(["list-sessions", "-F", fmt])
+    try:
+        r = _tmux(["list-sessions", "-F", fmt], timeout=5)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Terminal inventory timed out") from exc
     if r.returncode != 0:
-        return []
+        if any(message in r.stderr.lower() for message in ("no server running", "no sessions", "no such file or directory")):
+            return []
+        raise RuntimeError("Terminal inventory temporarily unavailable")
 
     out = []
     for line in r.stdout.splitlines():

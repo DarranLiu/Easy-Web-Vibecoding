@@ -67,7 +67,8 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_CLAUDE` | Claude Code 可执行文件。 |
 | `CC_WEB_CODEX` | Codex 可执行文件。 |
 | `CC_WEB_OPENCODE` | OpenCode 可执行文件。 |
-| `CC_WEB_CODEX_MODEL_CATALOG` | Codex 模型目录 JSON；空字符串关闭覆盖。 |
+| `CC_WEB_CODEX_MODEL_CATALOG` | 默认 `auto`，启动时从选定 Codex 程序刷新；也支持指定 JSON 路径，空字符串关闭覆盖。 |
+| `CC_WEB_UPLOAD_DIR` | 参考文件缓存，默认在 `CC_WEB_DEFAULT_DIR` 下的 `.cc-web-uploads`；必须位于文件白名单内，不要提交到 Git。 |
 | `CC_WEB_CODEX_STATUS_LINE` | Codex 原生底栏项目，逗号分隔。 |
 | `CC_WEB_CODEX_SCROLLBACK` | 默认 `1`，新建 Codex 使用内联历史；设为 `0` 可选择原生全屏模式。 |
 | `CC_WEB_DISK_ROOTS` | 允许资源面板执行 `du` 的根目录，逗号分隔。 |

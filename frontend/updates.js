@@ -45,13 +45,14 @@ function renderVersions() {
     section.querySelector("strong").textContent = versionNames[row.agent];
     section.querySelector(".version-heading span").textContent = labels[row.status] || labels.unknown;
     const values = section.querySelectorAll("dd");
-    values[0].textContent = row.running || (versionView.current?.agent === row.agent ? "无法读取" : "未运行");
+    const target = versionView.resume?.agent === row.agent;
+    values[0].textContent = row.running || (versionView.current?.agent === row.agent ? "无法读取" :
+      target && versionView.current?.state === "unknown" ? "未识别" : "未运行");
     values[1].textContent = row.installed || "无法读取";
     values[2].textContent = row.latest || "未确认";
     const job = versionJobs.get(row.agent) || row.job;
     const superseded = !versionJobs.has(row.agent) && row.jobSuperseded;
     const busy = versionJobs.has(row.agent) || updatePhases.has(job?.phase);
-    const target = versionView.resume?.agent === row.agent;
     const note = section.querySelector(".version-note");
     const messages = [];
     if (row.error) messages.push(row.error);
@@ -98,7 +99,7 @@ function renderVersions() {
   }
   const checked = (versionView.agents || []).map(row => row.checkedAt).filter(Boolean);
   document.getElementById("versions-status").textContent = versionLoading ? "正在检测官方版本…" :
-    checked.length ? "检测时间 " + new Date(Math.max(...checked) * 1000).toLocaleTimeString() : "尚未检测官方版本";
+    checked.length ? "上次检测时间 " + new Date(Math.max(...checked) * 1000).toLocaleTimeString() : "尚未检测官方版本";
 }
 
 async function loadVersions(check) {

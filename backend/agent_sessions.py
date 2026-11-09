@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -115,9 +116,59 @@ def process(pid):
         return None
 
 
+def boot_id():
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+
+
 def same_process(record):
+    if record.get("boot") and record["boot"] != boot_id():
+        return False
     current = process(record.get("pid", 0))
     return bool(current and current["start"] == record.get("start"))
+
+
+def native_agent(info):
+    """Recognize native Claude releases without trusting a numeric process name."""
+    if not info:
+        return None
+    name = info.get("comm", "")
+    if name in {"codex", "claude", "opencode"}:
+        return name
+    if not re.fullmatch(r"\d+\.\d+\.\d+", name) or not same_process(info):
+        return None
+    try:
+        if __package__:
+            from backend import config
+        else:
+            import config
+        executable = Path(f"/proc/{info['pid']}/exe")
+        path = Path(os.readlink(executable).removesuffix(" (deleted)"))
+        if __package__:
+            from backend import terminal_artifacts
+            if terminal_artifacts.recognizes(path, "claude"):
+                return "claude" if same_process(info) else None
+        if path.name != name or path.parent.name != "versions" or path.parent.parent.name != "claude":
+            return None
+        directories = {Path.home() / ".local/share/claude/versions"}
+        for entry in (config.CLAUDE_BIN, os.environ.get("CC_WEB_REAL_CLAUDE")):
+            if entry:
+                target = Path(entry).expanduser().resolve()
+                if target.parent.name == "versions" and target.parent.parent.name == "claude":
+                    directories.add(target.parent)
+        parent = path.parent.resolve()
+        if parent not in {directory.resolve() for directory in directories}:
+            return None
+        directory_info, file_info = parent.stat(), executable.stat()
+        if (directory_info.st_uid != os.getuid() or directory_info.st_mode & 0o002
+                or file_info.st_uid != os.getuid() or file_info.st_mode & 0o022
+                or not stat.S_ISREG(file_info.st_mode) or not file_info.st_mode & 0o111):
+            return None
+        with executable.open("rb") as stream:
+            if stream.read(4) != b"\x7fELF":
+                return None
+        return "claude" if same_process(info) else None
+    except (OSError, ValueError, RuntimeError):
+        return None
 
 
 def environment(pid):
@@ -224,6 +275,62 @@ def transcript_exists(record):
         return False
 
 
+def refresh_claude_transcript(sid, record):
+    """Repair a moved history path only for an already proven exact dialogue."""
+    identifier = conversation_id(record.get("session_id"))
+    if (record.get("agent") != "claude" or not identifier or transcript_exists(record)
+            or not (record.get("hook_seen") or record.get("bound"))):
+        return record
+    home = Path(record["home"]) / "projects"
+    try:
+        args = record.get("args", [])
+        explicit_resume = any(
+            (arg in {"--resume", "-r"} and index + 1 < len(args) and args[index + 1] == identifier)
+            or arg in {"--resume=" + identifier, "-r=" + identifier}
+            for index, arg in enumerate(args))
+        # A verified live explicit resume may intentionally use a new cwd while
+        # Claude continues writing the history under its original project.
+        moved_resume = bool(explicit_resume and record.get("managed") and record.get("hook_seen")
+                            and same_process(record) and native_agent(process(record["pid"])) == "claude"
+                            and Path(f"/proc/{record['pid']}/cwd").resolve() == Path(record["cwd"]).resolve())
+        matches = list(home.glob("*/" + identifier + ".jsonl"))
+        if len(matches) != 1:
+            return record
+        path = matches[0]
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or not _under(path, home):
+            return record
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        matched, remaining = False, 2 * 1024 * 1024
+        with os.fdopen(fd) as stream:
+            for _ in range(500):
+                line = stream.readline(min(65536, remaining))
+                remaining -= len(line)
+                if not line or remaining <= 0:
+                    break
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(item, dict) and item.get("sessionId") == identifier
+                        and isinstance(item.get("cwd"), str)
+                        and (moved_resume or Path(item["cwd"]).resolve() == Path(record["cwd"]).resolve())):
+                    matched = True
+                    break
+        if matched:
+            with lock(sid):
+                latest = load(sid)
+                if transcript_exists(latest):
+                    return latest
+                if all(latest.get(key) == record.get(key) for key in ("run", "pid", "start", "session_id", "cwd", "home")):
+                    latest["transcript"] = str(path)
+                    remember(sid, latest)
+                    return latest
+    except (OSError, ValueError):
+        pass
+    return record
+
+
 def take_restart_plan(agent):
     value = os.environ.pop("CC_WEB_RESTART_PLAN", "")
     if not value:
@@ -267,7 +374,7 @@ def record_process(sid, agent, pid, args, cwd, env, root=None, managed=False):
     record = {"agent": agent, "pid": int(pid), "start": info["start"], "run": uuid.uuid4().hex,
               "args": list(args), "cwd": str(cwd), "home": str(Path(home).expanduser().absolute()),
               "session_id": None, "transcript": None, "hook_seen": False, "managed": managed,
-              "launched_at": time.time()}
+              "launched_at": time.time(), "boot": boot_id()}
     directory_keys = ("HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
                       "XDG_STATE_HOME", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG", "OPENCODE_TUI_CONFIG")
     record["environment"] = {key: env[key] for key in directory_keys if env.get(key)}
@@ -383,7 +490,7 @@ def handle_hook(payload, env=None):
         for _ in range(128):
             if not caller or caller["pid"] == record["pid"]:
                 break
-            if caller["comm"] in {"claude", "codex"}:
+            if native_agent(caller) in {"claude", "codex"}:
                 return
             branch = caller
             caller = process(caller["ppid"])
@@ -406,6 +513,8 @@ def handle_hook(payload, env=None):
                       "PermissionRequest": "needs_attention", "PostToolUse": "working"}[event],
             "event": event, "at": time.time(), "run": run,
         }
+        if event == "Stop":
+            record["last_completion"] = dict(record["activity"])
         if payload.get("cwd"):
             record["cwd"] = payload["cwd"]
         if payload.get("permission_mode") in {"default", "acceptEdits", "plan", "dontAsk", "bypassPermissions", "auto", "manual"}:

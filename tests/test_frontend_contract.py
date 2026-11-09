@@ -44,7 +44,7 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn('"SF Pro Display"', STYLE_CSS)
         self.assertIn('"PingFang SC"', STYLE_CSS)
         self.assertRegex(STYLE_CSS, r"body\s*\{[^}]*font-size:\s*12\.5px")
-        self.assertIn("n = mqMobile.matches ? 11 : 13", APP_JS)
+        self.assertIn('n = mqMobile.matches ? 11 : (document.documentElement.dataset.ui === "bridge" ? 12 : 13)', APP_JS)
 
     def test_terminal_wheel_scrolls_terminal_history_not_app_mouse_history(self):
         self.assertIn("attachTerminalWheelHandler", APP_JS)

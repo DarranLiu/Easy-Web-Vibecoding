@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from backend import agent_sessions as sessions, agent_updates as updates
-from backend import config, main, terminal_launch, terminal_restart as restart, tmux_mgr
+from backend import config, main, terminal_launch, terminal_permissions as permissions, terminal_recovery as recovery, terminal_restart as restart, tmux_mgr
 
 
 class RestartUnitTests(unittest.TestCase):
@@ -255,7 +255,7 @@ class RestartOfflineTests(unittest.TestCase):
         self.home = self.root / "home"
         self.home.mkdir()
         self.socket = str(self.root / "tmux.sock")
-        self.env = {"PATH": "/usr/bin:/bin", "HOME": str(self.home), "CODEX_HOME": str(self.home / ".codex"), "XDG_DATA_HOME": str(self.home / ".local/share"),
+        self.env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "HOME": str(self.home), "CODEX_HOME": str(self.home / ".codex"), "XDG_DATA_HOME": str(self.home / ".local/share"),
                     "CLAUDE_CONFIG_DIR": str(self.home / ".claude"), "TERM": "xterm-256color", "BASH_ENV": "", "ENV": ""}
         self.stack.enter_context(patch.dict(os.environ, self.env, clear=True))
         self.stack.enter_context(patch.object(config, "AGENT_RUNTIME_DIR", self.root / "runtime"))
@@ -274,8 +274,9 @@ class RestartOfflineTests(unittest.TestCase):
         self.addCleanup(self.cleanup_server)
 
     def tmux(self, args, **kwargs):
+        kwargs.setdefault("timeout", 10)
         return subprocess.run(["tmux", "-S", self.socket, "-f", "/dev/null", *args], env=self.env,
-                              capture_output=True, text=True, timeout=10, **kwargs)
+                              capture_output=True, text=True, **kwargs)
 
     def cleanup_server(self):
         self.tmux(["kill-server"])
@@ -326,6 +327,95 @@ class RestartOfflineTests(unittest.TestCase):
         self.assertIn("on-request", after["args"])
         self.assertEqual(restart.restart("fixture", tab, body), result)
         self.assertEqual(sessions.load("fixture")["pid"], after["pid"])
+
+    def test_id_import_waiting_for_native_confirmation_exposes_same_window_without_relaunch(self):
+        from backend import terminal_lookup as lookup
+        native = str(uuid.uuid4())
+        history = self.home / ".claude/projects/offline" / (native + ".jsonl")
+        history.parent.mkdir(parents=True)
+        history.write_text(json.dumps({"sessionId": native, "cwd": str(self.root)}) + "\n")
+        (self.root / ".offline-require-trust").touch()
+        tabs = []
+        wait = restart._wait
+        with patch.object(config, "ROOTS", [str(self.root)]), \
+             patch.object(main.store, "list_tabs", side_effect=lambda: list(tabs)), \
+             patch.object(main.store, "get_tab", side_effect=lambda sid: next((t for t in tabs if t["id"] == sid), None)), \
+             patch.object(main.store, "add_tab", side_effect=tabs.append), \
+             patch.object(recovery, "_occupied", return_value=set()), \
+             patch.object(restart, "_wait", side_effect=lambda fn, seconds: wait(fn, min(seconds, 3))), \
+             patch.object(restart, "_send", wraps=restart._send) as send:
+            def open_body():
+                choice = lookup.inspect(native, main.safe_resolve)["matches"][0]
+                return {"query": native, "key": choice["key"], "expected": choice["expected"],
+                        "confirmed": True, "requestId": str(uuid.uuid4())}
+            result = lookup.open_session(open_body(), main.safe_resolve, Mock())
+            sid = result["id"]
+            self.assertTrue(result["resumePending"])
+            self.assertFalse(result["resumed"])
+            before = sessions.load(sid)
+            self.assertTrue(sessions.same_process(before))
+            self.assertIsNone(before["session_id"])
+            self.assertIn("OFFLINE_AWAITING_CONFIRMATION", self.tmux(["capture-pane", "-p", "-t", "cc_" + sid]).stdout)
+            commands = send.call_count
+            self.assertTrue(lookup._pending_claude(sid, sessions.load(sid)))
+            self.assertIn(sid, [t["id"] for t in tmux_mgr.list_sessions()])
+            self.assertEqual(lookup.open_session(open_body(), main.safe_resolve, Mock())["id"], sid)
+            self.assertEqual(send.call_count, commands)
+            self.assertEqual(sessions.load(sid)["pid"], before["pid"])
+            self.assertEqual(len(tabs), 1)
+            # Input goes only to the synthetic CLI on this test's private tmux socket.
+            self.tmux(["send-keys", "-t", "cc_" + sid, "CONFIRM_SYNTHETIC", "Enter"]).check_returncode()
+            self.wait(lambda: sessions.load(sid).get("session_id") == native)
+            after = sessions.load(sid)
+            self.assertTrue(after["hook_seen"])
+            self.assertEqual(after["pid"], before["pid"])
+            self.assertFalse(lookup.inspect(native, main.safe_resolve)["matches"][0]["resumePending"])
+
+    def test_permissions_restore_exact_dialog_and_survive_a_second_restart(self):
+        for agent, choice in (("codex", {"approval": "never", "sandbox": "workspace-write"}), ("claude", {"mode": "dontAsk"})):
+            with self.subTest(agent=agent):
+                sid = "permission_" + agent
+                other = "untouched_" + agent
+                tab = self.launch(agent, sid)
+                self.launch(agent, other)
+                before, untouched = sessions.load(sid), sessions.load(other)
+                parent = restart._pane(sid)["pid"]
+                view = permissions.inspect(sid, tab)
+                self.assertTrue(view["ready"])
+                body = {**self.body(tab), "permissions": choice}
+                result = restart.restart(sid, tab, body)
+                self.assertTrue(result["resumed"])
+                after = sessions.load(sid)
+                self.assertEqual(after["session_id"], before["session_id"])
+                self.assertEqual(permissions.current(after)["values"], choice)
+                self.assertEqual(permissions.current(sessions.load(sid, suffix=".saved.json"))["values"], choice)
+                self.assertEqual(restart._pane(sid)["pid"], parent)
+                self.assertTrue(sessions.same_process(untouched))
+                self.assertEqual(restart.restart(sid, tab, body), result)
+                restart.restart(sid, tab, self.body(tab))
+                self.assertEqual(sessions.load(sid)["session_id"], before["session_id"])
+                self.assertEqual(permissions.current(sessions.load(sid))["values"], choice)
+                self.assertTrue(sessions.same_process(untouched))
+
+    def test_incompatible_permission_mode_does_not_interrupt(self):
+        tab = self.launch("claude")
+        before = sessions.load("fixture")
+        with patch.object(permissions, "check_values", side_effect=permissions.PermissionError("Not supported")), patch.object(restart, "_send") as send:
+            with self.assertRaises(restart.RestartError):
+                restart.restart("fixture", tab, {**self.body(tab), "permissions": {"mode": "dontAsk"}})
+            send.assert_not_called()
+        self.assertTrue(sessions.same_process(before))
+
+    def test_claude_latest_native_mode_does_not_restore_old_bypass_flags(self):
+        tab = self.launch("claude", args=("--permission-mode", "bypassPermissions"))
+        before = sessions.load("fixture")
+        with sessions.lock("fixture"):
+            sessions.remember("fixture", {**before, "permission_mode": "manual"})
+        restart.restart("fixture", tab, self.body(tab))
+        after = sessions.load("fixture")
+        self.assertEqual(after["session_id"], before["session_id"])
+        self.assertNotIn("bypassPermissions", after["args"])
+        self.assertEqual(permissions.current(after)["values"], {"mode": "default"})
 
     def test_codex_delayed_exit_restores_exact_history_without_second_interrupt(self):
         self.tmux(["set-environment", "-g", "WEBCC_FIXTURE_EXIT_DELAY", "1.2"]).check_returncode()
@@ -552,16 +642,64 @@ class RestartOfflineTests(unittest.TestCase):
         self.assertEqual(after["session_id"], before["session_id"])
         self.assertEqual(after["home"], before["home"])
 
+    def test_boot_queue_restores_exact_dialog_with_missing_shared_install(self):
+        from backend import terminal_continuity as continuity, terminal_artifacts as artifacts
+        for agent in ("codex", "claude", "opencode"):
+            with self.subTest(agent=agent):
+                sid = "boot_" + agent
+                tab = self.launch(agent, sid)
+                before = sessions.load(sid)
+                # The synthetic CLI is a Python fixture, not a production build.
+                # Inject its saved artifact to exercise the real queue/plan/tmux path.
+                saved = artifacts.root() / ("fixture_" + agent) / agent
+                saved.parent.mkdir(mode=0o700)
+                shutil.copy2(self.root / agent, saved)
+                sessions.save(sid, {"armed": True, "boot": "simulated-previous-boot", "state": "watching",
+                    "signature": continuity.signature(before), "artifact": {
+                        "agent": agent, "path": str(saved), "identity": artifacts.identity(saved)}}, suffix=continuity.SUFFIX)
+                tmux_mgr.kill_session("cc_" + sid)
+                self.wait(lambda: not sessions.same_process(before))
+                with patch.object(main.store, "list_tabs", return_value=[tab]), patch.object(main.store, "get_tab", return_value=tab), \
+                        patch.object(config, agent.upper() + "_BIN", str(self.root / "missing-shared-install")), \
+                        patch.object(main, "safe_resolve", side_effect=lambda path: Path(path)):
+                    continuity.enqueue(sid, continuity.signature(before))
+                    continuity.run_next()
+                    state = continuity.status(sid, True)
+                    self.assertEqual(state["state"], "ready", state)
+                    after = sessions.load(sid)
+                    self.assertEqual(after["session_id"], before["session_id"])
+                    self.assertEqual(after["home"], before["home"])
+                    self.assertNotEqual(after["run"], before["run"])
+                    continuity.run_next()
+                    self.assertEqual(sessions.load(sid)["run"], after["run"])
+
     def test_agent_started_in_shell_tab_restores_its_saved_dialog(self):
         tab = self.launch("codex")
         before = sessions.load("fixture")
         tab["type"] = "shell"
+        self.assertTrue(permissions.inspect("fixture", tab)["ready"])
         tmux_mgr.kill_session("cc_fixture")
         self.wait(lambda: not sessions.same_process(before))
         with patch.object(main.store, "get_tab", return_value=tab):
             result = main.start_session("fixture", None)
         self.assertEqual(result["resumeAgent"], "codex")
         self.assertEqual(sessions.load("fixture")["session_id"], before["session_id"])
+
+    def test_background_recovery_releases_input_lock_at_native_trust_prompt(self):
+        tab = self.launch("claude")
+        before = sessions.load("fixture")
+        tmux_mgr.kill_session("cc_fixture")
+        self.wait(lambda: not sessions.same_process(before))
+        (self.root / ".offline-require-trust").touch()
+        preview = restart.inspect("fixture", tab)
+        started = time.monotonic()
+        result = restart.restart("fixture", tab, {"requestId": str(uuid.uuid4()),
+            "expected": preview["expected"], "backgroundRestore": True, "savedVersion": True})
+        self.assertLess(time.monotonic() - started, 8)
+        self.assertTrue(result["resumePending"])
+        self.assertFalse(result["resumed"])
+        self.assertFalse(restart.is_mutating("fixture"))
+        self.assertIn("OFFLINE_AWAITING_CONFIRMATION", self.tmux(["capture-pane", "-p", "-t", "cc_fixture"]).stdout)
 
     def test_opencode_exact_resume_with_private_route_tracking(self):
         tab = self.launch("opencode")
@@ -591,6 +729,28 @@ class RestartOfflineTests(unittest.TestCase):
             with self.assertRaises(HTTPException):
                 main.start_session("unknown", None)
             start.assert_not_called()
+
+    def test_stopped_legacy_windows_explicitly_bind_and_resume_without_changing_other_tasks(self):
+        for agent in ("codex", "claude", "opencode"):
+            with self.subTest(agent=agent):
+                sid = "legacy_" + agent
+                tab = self.launch(agent, sid)
+                before = sessions.load(sid)
+                other = self.launch(agent, "other_" + agent)
+                untouched = sessions.load(other["id"])
+                tmux_mgr.kill_session("cc_" + sid)
+                self.wait(lambda: not sessions.same_process(before))
+                self.wait(lambda: not sessions.process(before["pid"]))
+                (config.AGENT_RUNTIME_DIR / (sid + ".json")).unlink()
+                (config.AGENT_RUNTIME_DIR / (sid + ".saved.json")).unlink()
+                preview = recovery.inspect(sid, tab)
+                candidate = next(row for row in preview["candidates"] if row["sessionId"] == before["session_id"])
+                bound = recovery.bind(sid, tab, {"expected": preview["expected"], "sessionId": candidate["sessionId"],
+                    "candidateKey": candidate["candidateKey"], "confirmed": True})
+                result = restart.restart(sid, tab, {"requestId": str(uuid.uuid4()), "expected": bound["expected"], "confirmed": True})
+                self.assertTrue(result["resumed"])
+                self.assertEqual(sessions.load(sid)["session_id"], before["session_id"])
+                self.assertTrue(sessions.same_process(untouched))
 
     def test_background_snapshot_adopts_current_legacy_conversation_without_input(self):
         self.launch("codex", tracked=False)
@@ -633,11 +793,19 @@ class NativeCodexRestartTests(unittest.TestCase):
     wait = RestartOfflineTests.wait
 
     def test_current_cli_restores_synthetic_history_in_isolated_home(self):
+        self.check_native_resume(auto_catalog=False)
+
+    def test_auto_model_catalog_restores_same_synthetic_conversation(self):
+        self.check_native_resume(auto_catalog=True)
+
+    def check_native_resume(self, auto_catalog):
         binary = os.environ.get("CC_WEB_NATIVE_CODEX") or shutil.which("codex")
         if not binary:
             self.skipTest("Native Codex not installed")
         RestartOfflineTests.setUp(self)
         self.stack.enter_context(patch.object(config, "CODEX_BIN", binary))
+        if auto_catalog:
+            self.stack.enter_context(patch.object(config, "CODEX_MODEL_CATALOG", "auto"))
         home = self.home / ".codex"
         home.mkdir()
         bundled = subprocess.check_output([binary, "debug", "models", "--bundled"], env=self.env, text=True, timeout=15)
@@ -646,8 +814,8 @@ class NativeCodexRestartTests(unittest.TestCase):
         models = json.loads(bundled)
         model = (models["models"] if isinstance(models, dict) else models)[0]["slug"]
         (home / "config.toml").write_text(
-            f'model = {json.dumps(model)}\nmodel_provider = "offline"\n'
-            f'model_catalog_json = {json.dumps(str(catalog))}\ncheck_for_update_on_startup = false\n'
+            f'model = {json.dumps(model)}\nmodel_provider = "offline"\n' +
+            ('' if auto_catalog else f'model_catalog_json = {json.dumps(str(catalog))}\n') + 'check_for_update_on_startup = false\n'
             '\n[analytics]\nenabled = false\n'
             '\n[model_providers.offline]\nname = "Offline restart fixture"\n'
             'base_url = "http://127.0.0.1:9/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n'
@@ -674,11 +842,20 @@ class NativeCodexRestartTests(unittest.TestCase):
         tab = {"id": sid, "type": "codex", "cwd": str(self.root)}
         preview = restart.inspect(sid, tab)
         before = sessions.load(sid)
-        result = restart.restart(sid, tab, {"requestId": str(uuid.uuid4()), "expected": preview["expected"], "confirmed": True})
+        choice = {"approval": "never", "sandbox": "read-only"}
+        result = restart.restart(sid, tab, {"requestId": str(uuid.uuid4()), "expected": preview["expected"], "confirmed": True,
+                                          "permissions": choice})
         self.assertTrue(result["resumed"])
         self.assertEqual(sessions.load(sid)["session_id"], identifier)
+        self.assertEqual(permissions.current(sessions.load(sid))["values"], choice)
         self.assertNotEqual(sessions.load(sid)["pid"], before["pid"])
         self.wait(lambda: "Synthetic original conversation" in self.tmux(["capture-pane", "-p", "-t", "cc_native"]).stdout, 20)
+        if auto_catalog:
+            environment = sessions.environment(sessions.load(sid)["pid"])
+            exported = Path(environment["CC_WEB_CODEX_MODEL_CATALOG"])
+            self.assertEqual(exported.parent, self.root / "updates/model-catalogs")
+            self.assertEqual(json.loads(exported.read_text()), models)
+            self.assertEqual(environment["CC_WEB_CODEX_CATALOG_MODE"], "auto")
 
 
 @unittest.skipUnless(os.environ.get("CC_WEB_NATIVE_OPENCODE_TESTS") == "1", "opt-in native OpenCode restart test")

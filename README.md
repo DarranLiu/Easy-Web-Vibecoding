@@ -2,14 +2,14 @@
   <strong>English</strong> · <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-<p align="center">
-  <img src="docs/images/en/workspace.png" alt="Easy Web Vibecoding workspace with three independent terminals">
-</p>
-
 <h1 align="center">Easy Web Vibecoding</h1>
 
 <p align="center">
-  <strong>A persistent, split-screen web workspace for Claude Code, Codex, OpenCode, and your shell.</strong>
+  <strong>Run Claude Code, Codex, OpenCode and shells in your browser with saved multi-screen splits, session recovery, hot updates, file uploads and previews, resource monitoring, and mobile controls.</strong>
+</p>
+
+<p align="center">
+  <img src="docs/images/en/workspace.png" alt="The compact workbench with screen tabs, workspace tree and three real terminal panes">
 </p>
 
 <p align="center">
@@ -20,15 +20,11 @@
   <img src="https://img.shields.io/badge/backend-FastAPI-009688?style=flat&colorA=242424" alt="FastAPI">
 </p>
 
-<p align="center">
-  <strong>4</strong> terminal types · up to <strong>4</strong> panes · hot updates · one-click session recovery · desktop and mobile
-</p>
-
 Easy Web Vibecoding turns command-line coding agents already installed on your Linux server into a browser workspace. Its interface is called **CC Terminal**. It is not a model proxy and it does not relay model API traffic: `tmux + FastAPI + xterm.js` connect your browser to the real terminal process.
 
 Close the tab, lose the network, or restart the web service. The job remains in tmux and can be resumed when you return.
 
-**New in v0.2.0:** check CLI versions, update the shared installation without restarting running windows, and restart a selected agent back into its **original conversation**. The new workspace tree keeps session switching and cross-project splits in the sidebar.
+**New in v0.3.0:** a compact new workbench, saved screen tabs, open-by-ID, reference uploads, permission controls and unread completion indicators. The CLI hot updates and original-conversation recovery introduced in v0.2.0 are retained. [Release notes](docs/releases/v0.3.0.md).
 
 > [!NOTE]
 > Every screenshot below comes from the real interface rendered in a browser. Sessions, paths, IP addresses, files, and hardware data are synthetic and do not identify a real server.
@@ -91,6 +87,24 @@ Expand a workspace in the left sidebar to see its terminals. Click a session to 
 
 ![Two terminal panes](docs/images/en/desktop-split.png)
 
+### Keep several screens ready
+
+Each screen holds up to four panes. Add, rename, reorder and switch screens, or move a terminal between them without duplicating it. Saved layouts follow the authenticated token and selected profile, with separate mobile and desktop views. A profile name is not a separate user account. Conflicting edits offer save/reload recovery instead of silently overwriting another browser.
+
+![Screen tabs and split picker with existing locations marked](docs/images/en/screens.png)
+
+Finished replies leave an unread dot on their screen and a steady green outline around the pane. Enter that terminal to clear its marker; merely opening a screen does not mark every pane read.
+
+Paste a window or conversation ID to find the exact local session and add it to a split. The toolbar also copies the verified session ID, not its directory.
+
+![Open an exact session by ID](docs/images/en/session-lookup.png)
+
+### Change a session's permission mode deliberately
+
+The permission control shows the modes supported by that agent and installation. Applying a change requires confirmation and restarts only that agent into its original conversation. High-risk modes need an extra confirmation; the control cannot override an organization's policy.
+
+![Per-session approval and sandbox controls](docs/images/en/permissions.png)
+
 ### Copy with Ctrl+C, interrupt deliberately
 
 In the web terminal, `Ctrl+C`, `Ctrl+Shift+C`, and macOS `Cmd+C` **only copy selected text**. No selection or a clipboard error never becomes an interrupt. To cancel a command, use the separate **Interrupt current program** toolbar button and confirm. **Stop** still terminates the tmux session after confirmation. The copy button can also copy the screen; long press or right click requests the available scrollback.
@@ -101,19 +115,25 @@ Text pastes directly into the focused terminal. The image action accepts a file,
 
 ![Paste or drag an image](docs/images/en/send-image.png)
 
+The paperclip accepts reference files as well: select, drop or paste files, then insert their saved paths into the captured terminal. It does not press Enter or send a prompt for you. Uploads go to `.cc-web-uploads` under the default directory, or an allowed directory set by `CC_WEB_UPLOAD_DIR`.
+
+![Reference files queued for upload and path insertion](docs/images/en/reference-files.png)
+
 ### Manage and preview project files
 
 Browse, filter, upload, download, create, rename, and delete files inside the `CC_WEB_ROOTS` allowlist.
 
 ![File manager](docs/images/en/files.png)
 
-Preview common text, image, video, audio, and PDF files without opening a remote desktop.
+Paste a server path to open a directory or preview text, Markdown, JSON, CSV, images, audio, video and PDF. HTML previews are sanitized and sandboxed; unsupported binary formats remain downloadable.
 
 ![File preview](docs/images/en/file-preview.png)
 
 The workspace file panel can edit UTF-8 files up to 512 KiB, detect conflicting saves, and preserve permissions. The Git panel shows branch, changes and diffs without staging or committing anything.
 
 ![Workspace file editor](docs/images/en/workspace-files.png)
+
+![Read-only Git diff](docs/images/en/workspace-git.png)
 
 ### Monitor the machine without leaking command lines
 
@@ -133,7 +153,7 @@ The current release uses one shared token, not a multi-tenant account system. Th
 
 ### Keep Codex usage subtle
 
-Only the focused Codex pane shows its remaining percentage and reset time. Hidden tabs and other tools do not poll. Multiple entry points share a cache and file lock, so the server reads usage at most once every ten minutes.
+The toolbar shows a small battery-style indicator for the focused Codex pane, its remaining percentage and a countdown such as `2d4h` until reset. There is no bar below each terminal. Hidden tabs and other tools do not poll. Multiple entry points share a cache and file lock, so the server reads usage at most once every ten minutes.
 
 ![Codex usage indicator](docs/images/en/codex-usage.png)
 
@@ -152,7 +172,7 @@ The mobile layout keeps practical terminal keys such as `Esc`, `Tab`, `Ctrl`, ar
 
 ### A quieter terminal workspace
 
-Graphite is the default. Optional Mist Glass, edge glow, cursor trails and a subtle native input-region tint keep the real terminal input rather than adding another composer. Motion and transparency fall back appropriately for mobile, reduced-motion, data-saving and high-contrast settings. Effects do not change terminal output or call model APIs.
+The new compact workbench keeps commands, screen tabs and the workspace tree separate. Desktop controls are smaller without scaling the terminal canvas; saved font preferences are retained. Graphite is the default. Optional Mist Glass, edge glow, cursor trails and a subtle native input-region tint keep the real terminal input rather than adding another composer. Motion and transparency fall back appropriately for mobile, reduced-motion, data-saving and high-contrast settings. Effects do not change terminal output or call model APIs.
 
 ## Details that matter in daily use
 
@@ -164,7 +184,7 @@ Graphite is the default. Optional Mist Glass, edge glow, cursor trails and a sub
 - API responses and file previews use `Cache-Control: no-store`.
 - Slow browser connections apply bounded backpressure instead of building an unlimited terminal-output queue.
 
-The [visual guide](docs/VISUAL_GUIDE.md) covers each workflow step by step in Chinese. The [problems solved](docs/PROBLEMS_SOLVED.en.md) and [v0.2.0 release notes](docs/releases/v0.2.0.md) explain the fixes and upgrade boundaries. English preview labels are translated for documentation; the shipped interface currently uses primarily Chinese controls.
+The [visual guide](docs/VISUAL_GUIDE.md) covers each workflow step by step in Chinese. The [problems solved](docs/PROBLEMS_SOLVED.en.md) and [v0.3.0 release notes](docs/releases/v0.3.0.md) explain the fixes and upgrade boundaries. English preview labels are translated for documentation; the shipped interface currently uses primarily Chinese controls. Screenshots show synthetic versions and hardware, not claims about current upstream releases.
 
 ## Architecture
 
@@ -189,6 +209,7 @@ The core rule is simple: **a browser connection is not the terminal process**.
 | `CC_WEB_TOKEN` | Random on first launch | Shared access token; use a long random value. |
 | `CC_WEB_ROOTS` | Current user's home | Comma-separated allowlist for file APIs. |
 | `CC_WEB_DEFAULT_DIR` | Current user's home | Initial directory for new terminals. |
+| `CC_WEB_UPLOAD_DIR` | `.cc-web-uploads` under the default directory | Private reference-file cache, inside the file allowlist. |
 | `CC_WEB_CLAUDE` | Auto-detected | Path to the `claude` executable. |
 | `CC_WEB_CODEX` | Auto-detected | Path to the `codex` executable. |
 | `CC_WEB_OPENCODE` | Auto-detected | Path to the `opencode` executable. |

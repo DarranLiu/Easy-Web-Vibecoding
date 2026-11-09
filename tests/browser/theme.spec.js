@@ -18,6 +18,7 @@ const output = [
 ].map(line => line + '\x1b[0m\r\n').join('');
 
 async function fixture(page, theme = null, system = 'dark') {
+  let layout = { screenSchema: 1, panes: ['demo00'], active: 'demo00', direction: 'auto', ratios: {}, revision: 0 };
   await page.emulateMedia({ colorScheme: system });
   await page.addInitScript(initialTheme => {
     if (!localStorage.getItem('theme_fixture_seeded')) {
@@ -45,8 +46,14 @@ async function fixture(page, theme = null, system = 'dark') {
       '/api/config': { defaultDir: '/workspace/demo', types: { shell: true } },
       '/api/sessions': { sessions, groups: {}, manualGroups: [] },
       '/api/presence': { count: 1, strangers: 0, ips: [] },
+      '/api/workspaces': { workspaces: [{ id: 'ws_demo', name: 'Theme preview', cwd: '/workspace/demo', members: sessions.map(session => session.id), revision: 1 }] },
     };
     if (url.pathname.startsWith('/api/')) {
+      if (url.pathname.startsWith('/api/layout-binding/')) return route.fulfill({ json: { enabled: false } });
+      if (url.pathname.startsWith('/api/layouts/')) {
+        if (route.request().method() === 'PUT') layout = { ...route.request().postDataJSON(), revision: layout.revision + 1 };
+        return route.fulfill({ json: layout });
+      }
       return route.fulfill({ json: api[url.pathname] || {} });
     }
     const file = path.resolve(frontend, '.' + (url.pathname === '/' ? '/index.html' : url.pathname));
@@ -128,7 +135,7 @@ for (const theme of ['dark', 'light']) {
     await page.locator('#theme-toggle').click();
     const next = theme === 'dark' ? 'light' : 'dark';
     await expect(page.locator('html')).toHaveAttribute('data-theme', next);
-    await expect.poll(() => page.evaluate(() => panes.every(p => p.term.options.theme.background === TERM_THEME[currentTheme()].background))).toBe(true);
+    await expect.poll(() => page.evaluate(() => panes.every(p => p.term.options.theme.background === termTheme().background))).toBe(true);
     await readable(page);
     expect(await page.evaluate(() => panes.every((p, i) => p.term === originalTerms[i] && p.ws === originalSockets[i]))).toBe(true);
     expect(await page.evaluate(() => window.fixtureInput)).toEqual([]);
@@ -148,13 +155,13 @@ test('system theme changes update the page and terminal until manually overridde
   await paint(page);
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await expect.poll(() => page.evaluate(() => active.term.options.theme.foreground === TERM_THEME.light.foreground)).toBe(true);
+  await expect.poll(() => page.evaluate(() => active.term.options.theme.foreground === termTheme().foreground)).toBe(true);
   await readable(page);
   await page.locator('#theme-toggle').click();
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.emulateMedia({ colorScheme: 'light' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect.poll(() => page.evaluate(() => active.term.options.theme.foreground === TERM_THEME.dark.foreground)).toBe(true);
+  await expect.poll(() => page.evaluate(() => active.term.options.theme.foreground === termTheme().foreground)).toBe(true);
   expect(await page.evaluate(() => window.fixtureInput)).toEqual([]);
 });
 
@@ -164,10 +171,10 @@ test('theme preference changes and clearing storage synchronize existing tabs', 
   await fixture(other);
   await page.locator('#theme-toggle').click();
   await expect(other.locator('html')).toHaveAttribute('data-theme', 'light');
-  await expect.poll(() => other.evaluate(() => active.term.options.theme.foreground === TERM_THEME.light.foreground)).toBe(true);
+  await expect.poll(() => other.evaluate(() => active.term.options.theme.foreground === termTheme().foreground)).toBe(true);
   await page.evaluate(() => localStorage.clear());
   await expect(other.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect.poll(() => other.evaluate(() => active.term.options.theme.foreground === TERM_THEME.dark.foreground)).toBe(true);
+  await expect.poll(() => other.evaluate(() => active.term.options.theme.foreground === termTheme().foreground)).toBe(true);
   expect(await other.evaluate(() => window.fixtureInput)).toEqual([]);
 });
 

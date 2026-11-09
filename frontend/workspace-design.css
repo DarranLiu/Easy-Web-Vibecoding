@@ -1,0 +1,275 @@
+/* v132: workspace chrome only. Native terminal rendering and saved preferences
+   remain owned by app.js / appearance.js. See docs/UI-DESIGN-v132.md. */
+html[data-ui="bridge"] {
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --sb-w: 264px;
+  --deck-w: 300px;
+  --radius: 6px;
+  --action: #0071e3;
+  --action-fg: #ffffff;
+  --focus-ring: #0071e3;
+  --overlay-tint: #ffffffeb;
+}
+html[data-ui="bridge"][data-theme="dark"] {
+  --action: #0a66cf;
+  --focus-ring: #79b8ff;
+  --overlay-tint: #29292deb;
+}
+/* The optional photographic terminal theme keeps its own surface tokens. */
+html[data-ui="bridge"]:not([data-terminal-style="glass"]) {
+  --desktop-bg: #f5f5f7;
+  --shell-bg: #ffffff;
+  --sidebar-bg: #f5f5f7;
+  --ws-group-bg: #eaeaec;
+  --ws-child-bg: #f5f5f7;
+  --content-bg: #fafafa;
+  --raised: #ffffff;
+  --layer-2: #f5f5f7;
+  --text: #1d1d1f;
+  --text-2: #56565c;
+  --text-3: #626268;
+  --separator: #d8d8de;
+  --separator-2: #e7e7eb;
+  --hover: #e8e8ed;
+  --hover-2: #dddde3;
+  --accent: #0066cc;
+  --accent-soft: #e1edfa;
+  --accent-fg: #ffffff;
+  --green: #237746;
+  --red: #b42332;
+  --warning: #825500;
+  --control-bg: #ffffff;
+  --control-bd: #c3c3ca;
+  --shadow: 0 12px 40px #0000001f, 0 2px 8px #0000000f;
+}
+html[data-ui="bridge"][data-theme="dark"]:not([data-terminal-style="glass"]) {
+  --desktop-bg: #18181a;
+  --shell-bg: #1c1c1e;
+  --sidebar-bg: #202022;
+  --ws-group-bg: #2c2c2f;
+  --ws-child-bg: #202022;
+  --content-bg: #151517;
+  --raised: #28282b;
+  --layer-2: #222225;
+  --text: #f2f2f4;
+  --text-2: #b5b5bd;
+  --text-3: #aaaab2;
+  --separator: #3a3a40;
+  --separator-2: #303035;
+  --hover: #343439;
+  --hover-2: #404046;
+  --accent: #85baff;
+  --accent-soft: #263a52;
+  --accent-fg: #151517;
+  --green: #76cb99;
+  --red: #ff8c94;
+  --warning: #efc477;
+  --control-bg: #1c1c1e;
+  --control-bd: #53535c;
+  --shadow: 0 12px 40px #00000050, 0 2px 8px #00000030;
+}
+html[data-ui="bridge"] body { font-family: var(--font); font-size: 13px; letter-spacing: 0; }
+html[data-ui="bridge"] :where(button, input, select, textarea):not(.xterm-helper-textarea) { font-family: var(--font); letter-spacing: 0; }
+html[data-ui="bridge"] :is(.ws-editor textarea, .file-path-form input) { font-family: var(--mono); }
+html[data-ui="bridge"] :is(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: -2px;
+}
+html[data-ui="bridge"] :is(button, input, select) { accent-color: var(--action); }
+html[data-ui="bridge"] :is(.tb-btn, .hdr-btn, .ws-icon, .icon-btn) {
+  border-radius: 6px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+html[data-ui="bridge"] :is(.tb-btn, .hdr-btn, .ws-icon, .icon-btn):active:not(:disabled) { background: var(--hover-2); }
+html[data-ui="bridge"] .ui-icon { stroke-width: 1.75; }
+html[data-ui="bridge"] #titlebar { height: 48px; min-height: 48px; padding: 0 16px; }
+html[data-ui="bridge"] .app-brand { align-items: center; gap: 9px; }
+html[data-ui="bridge"] .app-brand::before { display: none; }
+html[data-ui="bridge"] .app-brand-icon { display: block; flex: none; }
+html[data-ui="bridge"] .app-brand-name { font-size: 13px; font-weight: 600; }
+html[data-ui="legacy"] .app-brand-icon { display: none; }
+
+/* The application, screen selection and native-terminal tools are separate bands. */
+html[data-ui="bridge"] #workspace-header { height: 48px; min-height: 48px; padding: 0 12px; gap: 12px; }
+html[data-ui="bridge"] .workspace-crumb { gap: 4px; flex: 1 0 140px; }
+html[data-ui="bridge"] #workspace-project { font-size: 13px; font-weight: 600; margin-left: 6px; }
+html[data-ui="bridge"] .workspace-actions { gap: 3px; }
+html[data-ui="bridge"] .ws-primary-actions { gap: 2px; padding: 0 8px; margin: 0 4px; border-left: 1px solid var(--separator); }
+html[data-ui="bridge"] :is(.tb-btn, .ws-primary-actions .hdr-btn) { width: 32px; min-width: 32px; height: 32px; }
+html[data-ui="bridge"] #ws-screen-bar { min-height: 40px; height: 40px; padding: 0 8px; gap: 8px; background: var(--shell-bg); }
+html[data-ui="bridge"] #ws-screen-tabs { align-items: center; gap: 3px; }
+html[data-ui="bridge"] #ws-screen-tabs > button {
+  height: 32px; max-width: 220px; padding: 0 12px; border-radius: 6px;
+  border-bottom: 0; color: var(--text-2); font-size: 12px;
+}
+html[data-ui="bridge"] #ws-screen-tabs > button[aria-selected="true"] {
+  color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 -2px 0 var(--accent); font-weight: 600;
+}
+html[data-ui="bridge"] #ws-screen-tabs small { font-size: 11px; font-weight: 400; }
+html[data-ui="bridge"] #ws-screen-add { width: 32px; min-width: 32px; height: 32px; }
+html[data-ui="bridge"] #ws-screen-tools { gap: 2px; padding-left: 8px; border-left: 1px solid var(--separator); }
+html[data-ui="bridge"] #ws-screen-tools .ws-icon { min-width: 30px; height: 30px; }
+html[data-ui="bridge"] #ws-layout-user { height: 30px; border: 0; background: var(--layer-2); border-radius: 6px; }
+html[data-ui="bridge"] #term-header { min-height: 36px; padding: 3px 10px; gap: 4px; background: var(--layer-2); }
+html[data-ui="bridge"] #term-header .hdr-btn { width: 30px; min-width: 30px; height: 30px; min-height: 30px; }
+html[data-ui="bridge"] #term-header .sizer { height: 28px; border-radius: 6px; }
+html[data-ui="bridge"] #term-header .sizer button { height: 26px; }
+html[data-ui="bridge"] .sizer .val { font-size: 11px; }
+html[data-ui="bridge"] .pane-bar { height: 32px; min-height: 32px; padding: 0 10px; gap: 7px; font-size: 12px; }
+html[data-ui="bridge"] .pane.focused > .pane-bar { background: var(--accent-soft); }
+html[data-ui="bridge"] .pane-host { padding: 6px 8px 4px; }
+html[data-ui="bridge"] #workspace-footer { height: 32px; min-height: 32px; background: var(--sidebar-bg); }
+html[data-ui="bridge"] body.aux-hidden #workspace-footer { height: 32px; min-height: 32px; }
+html[data-ui="bridge"] #workspace-footer .keycap { border-radius: 4px; background: var(--layer-2); font-size: 11px; }
+html[data-ui="bridge"] .footer-status { color: var(--text-3); }
+
+/* Full-width session names; status and commands occupy a separate row. */
+html[data-ui="bridge"] .ws-sidebar { padding: 12px 10px 8px; gap: 10px; }
+html[data-ui="bridge"] .ws-section-head { font-size: 11px; font-weight: 600; }
+html[data-ui="bridge"] .ws-tree-search { min-height: 34px; padding: 6px 9px; border-radius: 6px; background: var(--control-bg); }
+html[data-ui="bridge"] .ws-tree-search input { font-size: 12px; }
+html[data-ui="bridge"] .ws-tree-search:focus-within { outline: 2px solid var(--focus-ring); outline-offset: -1px; }
+html[data-ui="bridge"] .ws-tree-group { margin-bottom: 10px; }
+html[data-ui="bridge"] .ws-workspace { min-height: 44px; padding: 8px; border: 0; border-radius: 6px; }
+html[data-ui="bridge"] .ws-workspace-main b { font-size: 12px; font-weight: 600; }
+html[data-ui="bridge"] .ws-workspace-main small { font-size: 11px; }
+html[data-ui="bridge"] .ws-tree-children { margin: 4px 0 0 8px; padding: 0 0 0 6px; }
+html[data-ui="bridge"] .ws-session {
+  display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 28px);
+  grid-template-rows: 30px 28px; padding: 2px 4px 4px; margin-bottom: 2px; border-radius: 6px;
+}
+html[data-ui="bridge"] .ws-session-open { grid-column: 1 / -1; min-height: 30px; height: 30px; padding: 4px; border-radius: 4px; }
+html[data-ui="bridge"] .ws-session-open[aria-current="true"] { box-shadow: none; }
+html[data-ui="bridge"] .ws-session.is-active { box-shadow: inset 2px 0 var(--accent); }
+html[data-ui="bridge"] .ws-session-name { font-size: 12px; }
+html[data-ui="bridge"] .ws-session-meta {
+  grid-row: 2; grid-column: 1; padding-left: 16px; color: var(--text-3); font-size: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+html[data-ui="bridge"] .ws-session > .ws-icon { grid-row: 2; width: 28px; min-width: 28px; height: 28px; min-height: 28px; margin: 0; }
+html[data-ui="bridge"] .ws-session-rename { grid-column: 2; }
+html[data-ui="bridge"] .ws-session-actions { grid-column: 3; }
+html[data-ui="bridge"] .ws-session-split { grid-column: 4; }
+html[data-ui="bridge"] .ws-session[data-phase="offline"] { grid-template-columns: minmax(0, 1fr) repeat(2, 28px); }
+html[data-ui="bridge"] .ws-stopped-toggle { min-height: 32px; font-size: 11px; }
+html[data-ui="bridge"] .ws-sidebar-resize { top: 48px; }
+html[data-ui="bridge"] .ws-sidebar-actions { gap: 8px; padding-top: 8px; }
+html[data-ui="bridge"] .ws-sidebar-actions .ws-icon { width: 32px; height: 32px; }
+html[data-ui="bridge"] .side-foot { min-height: 40px; padding: 0 10px; }
+html[data-ui="bridge"] .side-foot .link-btn { padding: 6px; font-size: 11px; }
+html[data-ui="bridge"] .ws-save-indicator { font-size: 11px; }
+html[data-ui="bridge"] .ws-deck-head { height: 48px; min-height: 48px; padding: 0 12px; }
+html[data-ui="bridge"] .ws-deck-title { font-size: 13px; }
+html[data-ui="bridge"] .ws-deck-tabs { gap: 2px; padding: 6px 8px; }
+html[data-ui="bridge"] .ws-deck-tabs .ws-icon { height: 36px; border-radius: 6px; }
+html[data-ui="bridge"] :is(.ws-agent, .ws-setting, .ws-row) { border-color: var(--separator-2); }
+html[data-ui="bridge"] :is(.ws-agent-meta, .ws-phase, .ws-row small, .ws-split-row small) { font-size: 11px; }
+html[data-ui="bridge"] .ws-split-name b { font-size: 13px; font-weight: 600; }
+html[data-ui="bridge"] .ws-split-row { padding: 10px 14px; }
+
+/* Translucency belongs to transient layers, never to the native terminal text. */
+html[data-ui="bridge"] :is(.modal-box, .ui-dialog) { border-radius: 8px; border: 1px solid var(--separator); box-shadow: var(--shadow); background: var(--raised); }
+html[data-ui="bridge"] .modal-head { min-height: 52px; padding: 12px 18px; background: var(--raised); }
+html[data-ui="bridge"] .modal-head h3 { font-size: 15px; font-weight: 600; }
+html[data-ui="bridge"] .modal-foot { min-height: 56px; padding: 12px 18px; background: var(--layer-2); gap: 8px; }
+html[data-ui="bridge"] :is(.modal-box, .ui-dialog) :is(input:not([type="checkbox"]):not([type="range"]):not([type="radio"]), select) {
+  border-radius: 6px; border-color: var(--control-bd); background: var(--control-bg); color: var(--text);
+}
+html[data-ui="bridge"] :is(.btn-sm, .ui-btn) { min-height: 34px; border-radius: 6px; font-size: 12px; }
+html[data-ui="bridge"][data-theme] :is(.btn-sm.primary, .ui-btn.primary, .new-btn, .login-go) {
+  background: var(--action); border-color: var(--action); color: var(--action-fg);
+}
+html[data-ui="bridge"] :is(.btn-sm.primary, .ui-btn.primary, .new-btn, .login-go):hover:not(:disabled) { filter: brightness(1.08); }
+html[data-ui="bridge"] :is(.recent-sessions, .quick-commands) { background: var(--overlay-tint); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+html[data-ui="bridge"] .modal { backdrop-filter: none; -webkit-backdrop-filter: none; background: #00000052; }
+html[data-ui="bridge"] :is(.ws-workspace-list, .ws-deck-content, .modal-box) { scrollbar-gutter: stable; scroll-padding: 8px; }
+
+@media (min-width: 821px) {
+  html[data-ui="bridge"] #term-header #btn-split { display: none; }
+  html[data-ui="bridge"] #term-header .touch-divider { display: none; }
+}
+@media (min-width: 821px) and (max-width: 1180px) {
+  html[data-ui="bridge"] { --sb-w: 240px; --deck-w: 280px; }
+  html[data-ui="bridge"] #workspace-header { gap: 4px; padding: 0 8px; }
+  html[data-ui="bridge"] .workspace-crumb { flex-basis: 124px; }
+  html[data-ui="bridge"] #ws-screen-tools :is(.ws-screen-rename, .ws-screen-save) span { display: none; }
+}
+@media (max-width: 820px) {
+  html[data-ui="bridge"] #topbar {
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); grid-template-rows: 44px 44px;
+    height: 88px; min-height: 88px; padding: 0 6px; gap: 0; overflow: visible;
+  }
+  html[data-ui="bridge"] #topbar :is(.icon-btn, #btn-permissions) { width: 44px; min-width: 44px; height: 44px; justify-self: center; }
+  html[data-ui="bridge"] #hamburger { grid-area: 1 / 1; }
+  html[data-ui="bridge"] #recent-toggle { grid-area: 1 / 2 / 2 / 6; height: 44px; min-height: 44px; font-size: 13px; padding: 0 6px; }
+  html[data-ui="bridge"] #topbar #btn-permissions { grid-area: 1 / 6; }
+  html[data-ui="bridge"] #btn-files-m { grid-area: 2 / 1; }
+  html[data-ui="bridge"] #btn-gpu-m { grid-area: 2 / 2; }
+  html[data-ui="bridge"] #btn-versions-m { grid-area: 2 / 3; }
+  html[data-ui="bridge"] #ws-mobile-deck { grid-area: 2 / 4; }
+  html[data-ui="bridge"] #topbar-tools { grid-area: 2 / 5; }
+  html[data-ui="bridge"] #codex-quota-m { grid-area: 2 / 6; justify-self: center; min-width: 0; max-width: 100%; height: 44px; padding: 0 2px; }
+  html[data-ui="bridge"] #topbar-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  html[data-ui="bridge"] #recent-sessions { top: 88px; left: 8px; right: 8px; }
+  html[data-ui="bridge"] #ws-screen-bar {
+    display: grid; grid-template-columns: minmax(0, 1fr) 44px; grid-template-rows: 44px 44px;
+    height: 88px; min-height: 88px; padding: 0 6px; gap: 0;
+  }
+  html[data-ui="bridge"] #ws-screen-strip { grid-area: 1 / 1 / 2 / 3; width: 100%; }
+  html[data-ui="bridge"] #ws-screen-tools { grid-area: 2 / 1; border: 0; padding: 0; gap: 0; }
+  html[data-ui="bridge"] #ws-layout-user { grid-area: 2 / 2; width: 44px; height: 44px; }
+  html[data-ui="bridge"] #ws-screen-tabs > button { height: 40px; min-height: 40px; max-width: 200px; }
+  html[data-ui="bridge"] #ws-screen-tools .ws-icon { width: 44px; min-width: 44px; height: 44px; padding: 0; }
+  html[data-ui="bridge"] #ws-screen-tools .ws-icon[aria-label="删除当前屏幕"] { display: inline-flex; }
+  html[data-ui="bridge"] #ws-screen-add { width: 44px; min-width: 44px; height: 44px; }
+  html[data-ui="bridge"] #term-header { min-height: 48px; padding: 2px 6px; }
+  html[data-ui="bridge"] #term-header .hdr-btn { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  html[data-ui="bridge"] #term-header .sizer { height: 40px; }
+  html[data-ui="bridge"] #term-header .sizer button { width: 44px; min-width: 44px; height: 40px; }
+  html[data-ui="bridge"] .pane-bar { height: 44px; min-height: 44px; }
+  html[data-ui="bridge"] .pane-host { padding: 4px; }
+  html[data-ui="bridge"] #workspace-footer, html[data-ui="bridge"] body.aux-hidden #workspace-footer { min-height: 48px; height: 48px; }
+  html[data-ui="bridge"] #workspace-footer #auxbar { height: 44px; }
+  html[data-ui="bridge"] #workspace-footer .keycap { min-width: 40px; height: 40px; min-height: 40px; line-height: 38px; font-size: 12px; }
+  html[data-ui="bridge"] #sidebar { width: min(320px, calc(100vw - 32px)); }
+  html[data-ui="bridge"] :is(.ws-icon, .ws-sidebar-actions .ws-icon, #ws-space-tools .ws-icon) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  html[data-ui="bridge"] .ws-session { grid-template-columns: minmax(0, 1fr) repeat(2, 44px); grid-template-rows: 44px 44px; }
+  html[data-ui="bridge"] .ws-session[data-phase="offline"] { grid-template-columns: minmax(0, 1fr) repeat(2, 44px); }
+  html[data-ui="bridge"] .ws-session-open { height: 44px; min-height: 44px; }
+  html[data-ui="bridge"] .ws-session-meta { font-size: 11px; }
+  html[data-ui="bridge"] .ws-session > .ws-icon { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  html[data-ui="bridge"] .ws-tree-search { min-height: 44px; }
+  html[data-ui="bridge"] .ws-tree-search input { font-size: 16px; }
+  html[data-ui="bridge"] :is(.ws-stopped-toggle, #ws-workspace-sort, .side-foot .link-btn) { min-height: 44px; }
+  html[data-ui="bridge"] .ws-deck-tabs .ws-icon { width: auto; min-width: 0; height: 44px; }
+  html[data-ui="bridge"] .modal-head { padding: 8px 12px; }
+  html[data-ui="bridge"] .modal-foot { padding: 10px 12px; flex-wrap: wrap; }
+  html[data-ui="bridge"] :is(.btn-sm, .ui-btn) { min-height: 44px; }
+  html[data-ui="bridge"] .modal-box :is(input:not([type="checkbox"]):not([type="range"]):not([type="radio"]), select) { font-size: 16px; min-height: 44px; }
+  html[data-ui="bridge"] body.ws-compact-height #topbar {
+    display: flex; height: 44px; min-height: 44px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  }
+  html[data-ui="bridge"] body.ws-compact-height #recent-toggle { min-width: 120px; flex: 1 0 120px; }
+  html[data-ui="bridge"] body.ws-compact-height #topbar #codex-quota-m { min-width: 64px; }
+  html[data-ui="bridge"] body.ws-compact-height #ws-screen-bar {
+    display: flex; height: 44px; min-height: 44px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  }
+  html[data-ui="bridge"] body.ws-compact-height #ws-screen-strip { flex: 1 0 180px; width: auto; }
+  html[data-ui="bridge"] body.ws-compact-height #ws-screen-tools { flex: none; }
+  html[data-ui="bridge"] body.ws-compact-height #ws-layout-user { flex: none; }
+  html[data-ui="bridge"] body.ws-compact-height #recent-sessions { top: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-ui="bridge"] :is(.tb-btn, .hdr-btn, .ws-icon, .icon-btn) { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  html[data-ui="bridge"] :is(.recent-sessions, .quick-commands) { background: var(--raised); backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+@media (prefers-contrast: more) {
+  html[data-ui="bridge"] { --separator: currentColor; --separator-2: currentColor; --control-bd: currentColor; }
+}
+@media (forced-colors: active) {
+  html[data-ui="bridge"] { --text: CanvasText; --text-2: CanvasText; --text-3: CanvasText; --focus-ring: Highlight; --action: Highlight; --action-fg: HighlightText; }
+  html[data-ui="bridge"] :is(#sidebar, #workspace-header, #ws-screen-bar, #term-header, .modal-box, .ui-dialog, .recent-sessions, .quick-commands) { background: Canvas; color: CanvasText; box-shadow: none; backdrop-filter: none; }
+  html[data-ui="bridge"] #ws-screen-tabs > button[aria-selected="true"] { border: 2px solid Highlight; }
+  html[data-ui="bridge"] .ws-session.is-active { outline: 1px solid Highlight; }
+}

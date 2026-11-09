@@ -10,11 +10,13 @@ kills the session. Stopping a tab kills the session yet keeps the tab (grey,
 restartable); deleting a tab removes it for good.
 """
 import asyncio
+import codecs
 from contextlib import contextmanager
 import fcntl
 import hashlib
 import hmac
 import json
+import logging
 import mimetypes
 import os
 import pty
@@ -22,6 +24,7 @@ import secrets
 import uuid
 import shutil
 import signal
+import stat
 import sqlite3
 import struct
 import termios
@@ -33,19 +36,23 @@ from fastapi import (
     Depends, FastAPI, File, Form, HTTPException, Request, UploadFile,
     Response, WebSocket, WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import codex_usage, config, disk, gpu, store, tmux_mgr
 from backend import terminal_launch
-from backend import agent_sessions, terminal_restart, agent_updates
+from backend import agent_sessions, terminal_restart, terminal_permissions, terminal_recovery, agent_updates
+from backend import terminal_lookup, terminal_continuity
 from backend import known_ips
-from backend import workspaces, workspace_tools, agent_activity
+from backend import workspaces, workspace_tools, agent_activity, reference_uploads
 from backend import presence as presence_store
+from backend import completion_notifications
+from backend.browser_security import BrowserSecurityMiddleware
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
 app = FastAPI(title="Web CC Terminal")
+app.add_middleware(BrowserSecurityMiddleware)
 AUTH_COOKIE = "cc_web_token"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30
 
@@ -69,20 +76,41 @@ async def _track_existing_conversations():
         await asyncio.sleep(2)
 
 
+async def _restore_conversations():
+    while True:
+        try:
+            await asyncio.to_thread(terminal_continuity.run_next)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        await asyncio.sleep(1)
+
+
+async def _track_completions():
+    while True:
+        try:
+            await asyncio.to_thread(completion_notifications.collect)
+        except Exception:
+            logging.getLogger(__name__).exception("Completion collection failed")
+        await asyncio.sleep(5)
+
+
 @app.on_event("startup")
 async def start_conversation_tracking():
     app.state.conversation_tracker = asyncio.create_task(_track_existing_conversations())
+    app.state.continuity_worker = asyncio.create_task(_restore_conversations())
+    app.state.completion_tracker = asyncio.create_task(_track_completions())
 
 
 @app.on_event("shutdown")
 async def stop_conversation_tracking():
-    task = getattr(app.state, "conversation_tracker", None)
-    if task:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    for name in ("conversation_tracker", "continuity_worker", "completion_tracker"):
+        task = getattr(app.state, name, None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 # --- Auth -------------------------------------------------------------------
@@ -152,7 +180,9 @@ async def login(request: Request, response: Response):
         body = await request.json()
     except Exception:
         body = {}
-    token = (body.get("token") or "").strip()
+    if not isinstance(body, dict) or not isinstance(body.get("token"), str):
+        raise HTTPException(status_code=400, detail="token must be a string")
+    token = body["token"].strip()
     if not _token_matches(token):
         raise HTTPException(status_code=401, detail="bad token")
     response.set_cookie(
@@ -284,6 +314,39 @@ def get_config(_=Depends(require_auth)):
             "shell": True,
         },
     }
+
+
+@app.get("/api/fs/resolve")
+def fs_resolve(path: str, base: str = "", _=Depends(require_auth)):
+    raw = path.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
+        raw = raw[1:-1]
+    if not raw or len(raw) > 4096 or any(ord(c) < 32 for c in raw):
+        raise HTTPException(status_code=400, detail="请输入有效的服务器文件或文件夹路径")
+    if "://" in raw or raw.startswith(("file:", "data:", "javascript:")) or (len(raw) > 1 and raw[1] == ":"):
+        raise HTTPException(status_code=400, detail="这里只接受服务器路径，不接受网址或电脑本地路径")
+    if raw == "~" or raw.startswith("~/"):
+        raw = str(Path.home()) + raw[1:]
+    elif raw.startswith("~"):
+        raise HTTPException(status_code=400, detail="仅支持当前服务器用户的 ~/ 路径")
+    try:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            directory = safe_resolve(base or config.DEFAULT_DIR)
+            if not directory.is_dir():
+                raise HTTPException(status_code=400, detail="相对路径的基准不是文件夹")
+            candidate = directory / candidate
+        p = safe_resolve(str(candidate))
+        st = p.stat()
+        if not (stat.S_ISREG(st.st_mode) or stat.S_ISDIR(st.st_mode)):
+            raise HTTPException(status_code=415, detail="仅支持普通文件和文件夹")
+        return {**_entry(p), "parent": None if str(p) in config.ROOTS else str(p.parent)}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="路径不存在，或符号链接的目标已删除")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="没有权限读取该路径")
+    except (OSError, RuntimeError, ValueError):
+        raise HTTPException(status_code=400, detail="无法解析该路径")
 
 
 @app.get("/api/codex/usage")
@@ -424,6 +487,14 @@ async def term_image(cwd: str = Form(...), file: UploadFile = File(...), _=Depen
     return {"ok": True, "path": str(target), "name": fname}
 
 
+@app.post("/api/term/reference")
+async def term_reference(request: Request, _=Depends(require_auth)):
+    try:
+        return await reference_uploads.store(request, config.REFERENCE_UPLOAD_DIR, safe_resolve)
+    except reference_uploads.UploadError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
 @app.get("/api/fs/download")
 def fs_download(path: str, inline: int = 0, _=Depends(require_auth)):
     p = safe_resolve(path)
@@ -433,19 +504,18 @@ def fs_download(path: str, inline: int = 0, _=Depends(require_auth)):
     # downloads instead of rendering — preview needs the inline form. Range is
     # handled by FileResponse either way, which <video> seeking (and iOS
     # playback at all) depends on.
+    media = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+    native_media = media.startswith(("image/", "video/", "audio/")) or media == "application/pdf"
+    headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store",
+               "Cross-Origin-Resource-Policy": "same-origin"}
+    # Keep active documents isolated without disabling the browser's PDF viewer.
+    if not native_media or media == "image/svg+xml":
+        headers["Content-Security-Policy"] = "sandbox; default-src 'none'"
     if inline:
-        media = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-        if not (media.startswith(("image/", "video/", "audio/")) or media == "application/pdf"):
+        if not native_media:
             raise HTTPException(status_code=415, detail="此文件类型不支持内嵌预览")
-        return FileResponse(
-            str(p),
-            media_type=media,
-            headers={
-                "Content-Security-Policy": "sandbox; default-src 'none'",
-                "Cross-Origin-Resource-Policy": "same-origin",
-            },
-        )
-    return FileResponse(str(p), filename=p.name)
+        return FileResponse(str(p), media_type=media, headers=headers)
+    return FileResponse(str(p), filename=p.name, headers=headers)
 
 
 _TEXT_PREVIEW_MAX = 512 * 1024
@@ -459,7 +529,8 @@ def fs_text(path: str, _=Depends(require_auth)):
         raise HTTPException(status_code=400, detail="不是文件")
     try:
         size = p.stat().st_size
-        raw = p.open("rb").read(_TEXT_PREVIEW_MAX + 1)
+        with p.open("rb") as stream:
+            raw = stream.read(_TEXT_PREVIEW_MAX + 1)
     except OSError as e:
         raise HTTPException(status_code=500, detail=str(e))
     truncated = len(raw) > _TEXT_PREVIEW_MAX
@@ -468,7 +539,8 @@ def fs_text(path: str, _=Depends(require_auth)):
         raise HTTPException(status_code=415, detail="这是二进制文件,无法按文本预览")
     for enc in ("utf-8", "gb18030", "latin-1"):
         try:
-            return {"text": raw.decode(enc), "encoding": enc, "truncated": truncated, "size": size}
+            text = codecs.getincrementaldecoder(enc)().decode(raw, final=not truncated)
+            return {"text": text, "encoding": enc, "truncated": truncated, "size": size}
         except UnicodeDecodeError:
             continue
     return {"text": raw.decode("utf-8", "replace"), "encoding": "utf-8?", "truncated": truncated, "size": size}
@@ -508,6 +580,7 @@ def _serialize(live: dict):
         out.append({**t, "alive": alive, "attached": live[t["id"]]["attached"] if alive else 0,
                     "resumeAgent": record.get("agent") if record.get("agent") in terminal_launch.AGENTS else None,
                     "codexScrollback": bool(alive and live[t["id"]].get("codexScrollback", False)),
+                    "continuity": terminal_continuity.status(t["id"], alive, record),
                     "activity": agent_activity.status(t["id"], alive, record)})
     out.sort(key=lambda x: x.get("created", ""), reverse=True)
     return out
@@ -515,9 +588,48 @@ def _serialize(live: dict):
 
 @app.get("/api/sessions")
 def list_sessions(_=Depends(require_auth)):
-    live = {s["id"]: s for s in tmux_mgr.list_sessions()}
+    try:
+        live = {s["id"]: s for s in tmux_mgr.list_sessions()}
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(503, "终端状态暂不可用，请稍后重试；不会标记为已停止") from exc
     _adopt_orphans(live)
     return {"sessions": _serialize(live), "groups": store.get_groups(), "manualGroups": store.get_manual_groups()}
+
+
+@app.get("/api/session-lookup")
+def lookup_session(id: str, _=Depends(require_auth)):
+    try:
+        return JSONResponse(terminal_lookup.inspect(id, safe_resolve), headers={"Cache-Control": "private, no-store"})
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        raise HTTPException(503, "本地会话记录暂时不可用") from exc
+
+
+@app.get("/api/sessions/{sid}/identity")
+def session_identity(sid: str, _=Depends(require_auth)):
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(404, "没有这个标签")
+    try:
+        result = terminal_lookup.copy_identity(sid, tab, safe_resolve)
+        return JSONResponse(result, headers={"Cache-Control": "private, no-store"})
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        raise HTTPException(503, "暂时无法核对会话 ID，请稍后重试") from exc
+
+
+@app.post("/api/session-lookup/open")
+async def open_session_id(request: Request, _=Depends(require_auth)):
+    body = await _workspace_body(request)
+    try:
+        result = await asyncio.to_thread(terminal_lookup.open_session, body, safe_resolve, _start_session)
+        return JSONResponse(result, headers={"Cache-Control": "private, no-store"})
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        raise HTTPException(503, "打开未完成，请重新查找窗口状态；不会自动重试") from exc
 
 
 @contextmanager
@@ -569,6 +681,18 @@ async def workspace_update(wid: str, request: Request, _=Depends(require_auth)):
         return workspaces.update(wid, await _workspace_body(request), {t["id"] for t in store.list_tabs()})
 
 
+@app.post("/api/workspaces/{wid}/activate")
+def workspace_activate(wid: str, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.activate(wid)
+
+
+@app.post("/api/workspaces/{wid}/move-session")
+async def workspace_move_session(wid: str, request: Request, _=Depends(require_auth)):
+    with _workspace_errors():
+        return workspaces.move_session(wid, await _workspace_body(request), {t["id"] for t in store.list_tabs()})
+
+
 @app.delete("/api/workspaces/{wid}")
 def workspace_delete(wid: str, revision: int, _=Depends(require_auth)):
     with _workspace_errors():
@@ -596,6 +720,28 @@ def workspace_fleet(_=Depends(require_auth)):
         return {"sessions": tabs, "events": workspaces.record_events(statuses)}
 
 
+@app.get("/api/layout-binding/{kind}")
+def token_layout_binding(kind: str, _=Depends(require_auth)):
+    with _workspace_errors():
+        value = workspaces.token_layout_binding(config.TOKEN, kind) if config.AUTH_ENABLED else {"enabled": False}
+        return JSONResponse(value, headers={"Cache-Control": "private, no-store"})
+
+
+@app.put("/api/layout-binding/{kind}")
+async def save_token_layout_binding(kind: str, request: Request, _=Depends(require_auth)):
+    if not config.AUTH_ENABLED:
+        raise HTTPException(409, "Token layout binding requires authentication")
+    with _workspace_errors():
+        value = workspaces.token_layout_binding(config.TOKEN, kind, await _workspace_body(request))
+        return JSONResponse(value, headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/api/layouts")
+def saved_device_layouts(kind: str = "desktop", _=Depends(require_auth)):
+    with _workspace_errors():
+        return {"layouts": workspaces.saved_layouts(kind)}
+
+
 @app.get("/api/layouts/{device}")
 def device_layout(device: str, _=Depends(require_auth)):
     with _workspace_errors():
@@ -612,6 +758,21 @@ async def save_device_layout(device: str, request: Request, _=Depends(require_au
 async def workspace_ack(request: Request, _=Depends(require_auth)):
     with _workspace_errors():
         workspaces.acknowledge((await _workspace_body(request)).get("ids"))
+        return {"ok": True}
+
+
+@app.get("/api/completions")
+def completion_unread(_=Depends(require_auth)):
+    with _workspace_errors():
+        return JSONResponse(completion_notifications.unread(config.TOKEN if config.AUTH_ENABLED else "local"),
+                            headers={"Cache-Control": "private, no-store"})
+
+
+@app.post("/api/completions/ack")
+async def completion_ack(request: Request, _=Depends(require_auth)):
+    with _workspace_errors():
+        completion_notifications.acknowledge(config.TOKEN if config.AUTH_ENABLED else "local",
+                                             (await _workspace_body(request)).get("ids"))
         return {"ok": True}
 
 
@@ -749,6 +910,7 @@ def stop_session(sid: str, _=Depends(require_auth)):
     if not store.get_tab(sid):
         raise HTTPException(status_code=404, detail="没有这个标签")
     with _terminal_operation(sid):
+        terminal_continuity.disarm(sid)
         record = agent_sessions.load(sid)
         if record.get("agent") == "codex" and agent_sessions.same_process(record):
             agent_sessions.refresh_codex(sid, record)
@@ -763,6 +925,25 @@ def stop_session(sid: str, _=Depends(require_auth)):
 def start_session(sid: str, _=Depends(require_auth)):
     with _terminal_operation(sid):
         return _start_session(sid)
+
+
+@app.post("/api/sessions/{sid}/restore", status_code=202)
+async def enqueue_session_restore(sid: str, request: Request, _=Depends(require_auth)):
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("expected"), str):
+        raise HTTPException(400, "恢复请求无效")
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(404, "没有这个标签")
+    safe_resolve(tab["cwd"])
+    try:
+        return await asyncio.to_thread(terminal_continuity.enqueue, sid, body["expected"])
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    except BlockingIOError as exc:
+        raise HTTPException(409, "此终端正在执行其他操作，请稍后刷新") from exc
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(503, "恢复队列暂不可用") from exc
 
 
 @contextmanager
@@ -787,6 +968,7 @@ def _start_session(sid):
                     raise terminal_restart.RestartError(preview["reason"])
                 return terminal_restart.restart_locked(sid, tab, {
                     "requestId": str(uuid.uuid4()), "expected": preview["expected"], "confirmed": True,
+                    "savedVersion": True,
                 })
             except terminal_restart.RestartError as exc:
                 raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
@@ -829,6 +1011,43 @@ def inspect_restart(sid: str, _=Depends(require_auth)):
         return terminal_restart.inspect(sid, tab)
     except terminal_restart.RestartError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.get("/api/sessions/{sid}/permissions")
+def inspect_permissions(sid: str, _=Depends(require_auth)):
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(status_code=404, detail="没有这个标签")
+    try:
+        return terminal_permissions.inspect(sid, tab)
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@app.get("/api/sessions/{sid}/recovery")
+def inspect_recovery(sid: str, q: str = "", offset: int = 0, _=Depends(require_auth)):
+    tab = store.get_tab(sid)
+    if not tab:
+        raise HTTPException(404, "没有这个标签")
+    safe_resolve(tab["cwd"])
+    try:
+        return terminal_recovery.inspect(sid, tab, q, offset)
+    except terminal_restart.RestartError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+
+
+@app.post("/api/sessions/{sid}/recovery/bind")
+async def bind_recovery(sid: str, request: Request, _=Depends(require_auth)):
+    body = await _workspace_body(request)
+    with _terminal_operation(sid):
+        tab = store.get_tab(sid)
+        if not tab:
+            raise HTTPException(404, "没有这个标签")
+        safe_resolve(tab["cwd"])
+        try:
+            return await asyncio.to_thread(terminal_recovery.bind, sid, tab, body)
+        except terminal_restart.RestartError as exc:
+            raise HTTPException(exc.status, str(exc)) from exc
 
 
 @app.post("/api/sessions/{sid}/restart/bind")
@@ -914,6 +1133,7 @@ async def rollback_agent(agent: str, request: Request, _=Depends(require_auth)):
 @app.delete("/api/sessions/{sid}")
 def delete_session(sid: str, _=Depends(require_auth)):
     with _terminal_operation(sid):
+        terminal_continuity.disarm(sid)
         name = tmux_mgr.session_name(sid)
         if tmux_mgr.session_exists(name):
             tmux_mgr.kill_session(name)
@@ -1018,6 +1238,30 @@ def _set_winsize(fd: int, rows: int, cols: int):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
+async def _write_pty_input(fd: int, data: bytes):
+    """Preserve every byte when a nonblocking terminal accepts a partial write."""
+    pending = memoryview(data)
+    loop = asyncio.get_running_loop()
+    while pending:
+        try:
+            count = os.write(fd, pending)
+            if count <= 0:
+                raise OSError("Terminal input closed")
+            pending = pending[count:]
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            ready = loop.create_future()
+            def writable():
+                if not ready.done():
+                    ready.set_result(None)
+            loop.add_writer(fd, writable)
+            try:
+                await ready
+            finally:
+                loop.remove_writer(fd)
+
+
 @app.websocket("/ws/term/{sid}")
 async def ws_term(websocket: WebSocket, sid: str):
     if not check_ws_token(websocket.cookies.get(AUTH_COOKIE, "")):
@@ -1108,7 +1352,7 @@ async def ws_term(websocket: WebSocket, sid: str):
                 if scrolled:
                     tmux_mgr.exit_copy_mode(name)
                     scrolled = False
-                os.write(master_fd, obj.get("data", "").encode())
+                await asyncio.wait_for(_write_pty_input(master_fd, obj.get("data", "").encode()), timeout=30)
             elif t == "resize":
                 scroll_state.reset()
                 _set_winsize(master_fd, max(2, min(300, int(obj.get("rows", 24)))),

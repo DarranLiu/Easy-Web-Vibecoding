@@ -79,6 +79,13 @@ class AgentUpdateTests(unittest.TestCase):
         for value in (None, "garbage", "1.2.3-beta.1", "01.2.3"):
             self.assertEqual(updates._comparison(value, "1.2.3"), "unknown")
 
+    def test_job_poll_never_overwrites_completion_after_reading_stale_busy_state(self):
+        stale = {"requestId": "original", "phase": "activating"}
+        for latest in ({"requestId": "original", "phase": "done"}, {"requestId": "new", "phase": "queued"}):
+            with self.subTest(latest=latest), patch.object(updates, "_load", side_effect=[stale, latest]), patch.object(updates, "_save_job") as save:
+                self.assertEqual(updates._job("codex"), latest)
+                save.assert_not_called()
+
     def test_offline_probes_hide_account_environment(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "fake-not-a-real-key", "ANTHROPIC_API_KEY": "fake"}):
             env = updates._probe_env(str(self.root))

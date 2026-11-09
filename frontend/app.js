@@ -61,9 +61,11 @@ function showLogin() {
       if (!r.ok) throw new Error("Token 不正确，请重试");
       localStorage.removeItem("cc_token");
       sessionStorage.removeItem("cc_login_tried");
+      await window.ccWorkspace?.authenticationChanged();
       hideLogin();
       await loadConfig();
       await loadTabs();
+      await window.ccWorkspace?.persist();
       heartbeat();
     } catch (err) {
       const hint = document.getElementById("login-hint");
@@ -98,7 +100,7 @@ async function api(path, opts = {}, _retries) {
     let msg = r.statusText;
     const body = await r.text();
     if (body) { try { msg = JSON.parse(body).detail || body; } catch (_) { msg = body; } }
-    throw new Error(msg);
+    const error = new Error(msg); error.status = r.status; throw error;
   }
   const ct = r.headers.get("content-type") || "";
   return ct.includes("json") ? r.json() : r.text();
@@ -136,10 +138,10 @@ const GLYPH_ICONS = {
 function initialiseCommandIcons() {
   document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = uiIcon(el.dataset.icon); });
   const commands = {
-    "btn-sidebar": "PanelLeft", hamburger: "PanelLeft", "btn-files": "FolderOpen",
+    "btn-sidebar": "PanelLeft", "header-new": "SquareTerminal", hamburger: "PanelLeft", "btn-files": "FolderOpen",
     "btn-files-m": "FolderOpen", "btn-gpu": "Activity", "btn-gpu-m": "Activity",
     "tl-green": "Maximize", "btn-fs": "Maximize", "new-group": "FolderPlus",
-    "btn-select": "TextSelect", "btn-copy": "Copy", "btn-img": "ImagePlus",
+    "btn-select": "TextSelect", "btn-copy": "Copy", "btn-img": "ImagePlus", "btn-reference": "Paperclip",
     "btn-split": "PanelsTopLeft", "btn-dir": "Columns2", "btn-kbd": "Keyboard",
     "btn-aux": "Command", "btn-interrupt": "CirclePause", "btn-stop": "Square", "btn-restart": "RotateCw", "size-dn": "Minus", "size-up": "Plus",
     "dir-close": "X", "img-close": "X", "gpu-close": "X", "ips-close": "X",
@@ -171,6 +173,13 @@ function keyboardClickable(el, action, label) {
 }
 
 const layerTimers = new WeakMap();
+let layerOrder = 0, dialogId = 0;
+const modalSelector = '.modal,.ui-dialog-backdrop,.login,[data-modal-layer]';
+function topModal() {
+  return Array.from(document.querySelectorAll(modalSelector)).filter(layerOpen).sort((a, b) =>
+    (parseInt(getComputedStyle(a).zIndex) || 0) - (parseInt(getComputedStyle(b).zIndex) || 0) ||
+    (a.__ccLayerOrder || 0) - (b.__ccLayerOrder || 0)).pop();
+}
 function motionOff() {
   return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
@@ -185,7 +194,10 @@ function layerOpen(el) {
 function openLayer(el, restoreFocus) {
   if (!el) return;
   clearLayerTimer(el);
-  if (restoreFocus && el.classList.contains("hidden")) el.__ccReturnFocus = document.activeElement;
+  if ((restoreFocus || el.matches(modalSelector)) && el.classList.contains("hidden")) el.__ccReturnFocus = document.activeElement;
+  // Equal-z-index dialogs must paint in the same order as keyboard focus.
+  if (el.matches(modalSelector) && el.parentElement === document.body) document.body.append(el);
+  el.__ccLayerOrder = ++layerOrder;
   el.classList.remove("hidden", "is-closing");
   el.classList.add("is-opening");
   const timer = setTimeout(() => {
@@ -201,12 +213,14 @@ function closeLayer(el, after) {
     el.classList.add("hidden");
     el.classList.remove("is-opening", "is-closing");
     layerTimers.delete(el);
-    if (after) after();
     const returnFocus = el.__ccReturnFocus;
     delete el.__ccReturnFocus;
-    if (returnFocus && returnFocus.isConnected) {
+    const upper = topModal();
+    if (returnFocus?.isConnected && (!upper || upper.contains(returnFocus)) &&
+        (el.contains(document.activeElement) || document.activeElement === document.body)) {
       try { returnFocus.focus({ preventScroll: true }); } catch (e) {}
     }
+    if (after) after();
   };
   if (motionOff()) { finish(); return; }
   el.classList.remove("is-opening");
@@ -233,7 +247,7 @@ function setButtonBusy(button, busy) {
 // Fluent-style tooltips for icon-only commands. Native titles are promoted on
 // first use so the tooltip can be positioned inside the viewport.
 const tooltip = document.getElementById("tooltip");
-const TOOLTIP_TARGETS = ".tb-btn,.hdr-btn,.icon-btn,.ws-icon,.mini,.icon-btn-sm,.group-rename,.group-del,.pane-x,.pane-swap,.pane-restart,.toolbar-btn[aria-label]";
+const TOOLTIP_TARGETS = ".tb-btn,.hdr-btn,.icon-btn,.ws-icon,.mini,.icon-btn-sm,.group-rename,.group-del,.pane-x,.pane-swap,.pane-restart,.quota-battery,.toolbar-btn[aria-label]";
 let tooltipTimer = null;
 let tooltipOwner = null;
 let keyboardNavigation = false;
@@ -302,14 +316,11 @@ document.addEventListener("keydown", (e) => {
 // Keep keyboard focus inside the uppermost modal surface.
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Tab") return;
-  const layers = Array.from(document.querySelectorAll(
-    '.modal:not(.hidden):not(.is-closing),.ui-dialog-backdrop:not(.hidden):not(.is-closing),.login:not(.hidden):not(.is-closing)'
-  ));
-  const layer = layers[layers.length - 1];
+  const layer = topModal();
   if (!layer) return;
   const focusable = Array.from(layer.querySelectorAll(
     'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex]:not([tabindex="-1"])'
-  )).filter((el) => el.getClientRects().length);
+  )).filter((el) => el.tabIndex >= 0 && el.getClientRects().length);
   if (!focusable.length) return;
   const first = focusable[0], last = focusable[focusable.length - 1];
   if (e.shiftKey && (document.activeElement === first || !layer.contains(document.activeElement))) {
@@ -335,16 +346,21 @@ function uiDialog(opts) {
     back.className = "ui-dialog-backdrop hidden";
     const box = document.createElement("div");
     box.className = "ui-dialog";
+    const id = "ui-dialog-" + ++dialogId;
+    box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true");
+    box.setAttribute("aria-labelledby", id + "-title");
     box.innerHTML =
       '<div class="ui-dialog-icon"></div><div class="ui-dialog-title"></div><div class="ui-dialog-msg"></div>' +
       (opts.input ? '<input class="ui-dialog-input" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" />' : "") +
       '<div class="ui-dialog-btns"></div>';
     box.querySelector(".ui-dialog-icon").textContent = opts.icon || "i";
     box.querySelector(".ui-dialog-title").textContent = opts.title || "";
+    box.querySelector(".ui-dialog-title").id = id + "-title";
+    box.querySelector(".ui-dialog-icon").setAttribute("aria-hidden", "true");
     const msgEl = box.querySelector(".ui-dialog-msg");
-    if (opts.message) msgEl.textContent = opts.message; else msgEl.remove();
+    if (opts.message) { msgEl.textContent = opts.message; msgEl.id = id + "-message"; box.setAttribute("aria-describedby", msgEl.id); } else msgEl.remove();
     const input = opts.input ? box.querySelector(".ui-dialog-input") : null;
-    if (input) input.value = opts.defaultValue || "";
+    if (input) { input.value = opts.defaultValue || ""; input.setAttribute("aria-labelledby", id + "-title"); }
     const btns = box.querySelector(".ui-dialog-btns");
     const cancel = document.createElement("button");
     cancel.className = "ui-btn"; cancel.textContent = opts.cancelLabel || "取消";
@@ -360,14 +376,18 @@ function uiDialog(opts) {
     cancel.onclick = () => done(opts.input ? null : false);
     ok.onclick = () => done(opts.input ? (input ? input.value : "") : true);
     function onKey(e) {
-      if (e.key === "Escape") { e.preventDefault(); cancel.onclick(); }
-      else if (e.key === "Enter") { e.preventDefault(); ok.onclick(); }
+      if (topModal() !== back || e.isComposing || e.keyCode === 229 || e.defaultPrevented) return;
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); cancel.onclick(); }
+      else if (e.key === "Enter" && e.target === input) { e.preventDefault(); e.stopImmediatePropagation(); ok.onclick(); }
     }
     btns.appendChild(cancel); btns.appendChild(ok);
     back.appendChild(box); document.body.appendChild(back); openLayer(back, true);
     back.onclick = (e) => { if (e.target === back) cancel.onclick(); };
     document.addEventListener("keydown", onKey);
-    setTimeout(() => { if (input) { input.focus(); input.select(); } else ok.focus(); }, 30);
+    setTimeout(() => {
+      if (settling || topModal() !== back) return;
+      if (input) { input.focus(); input.select(); } else (opts.destructive ? cancel : ok).focus();
+    }, 30);
   });
 }
 function uiPrompt(title, defaultValue, icon) { return uiDialog({ title, input: true, defaultValue, okLabel: "确定", icon: icon || "✎" }); }
@@ -405,7 +425,57 @@ async function loadTabs() {
   updateRestartControls();
   maybeRestoreActiveTab();
   window.ccWorkspace?.sessionsChanged();
+  syncTerminalContinuity();
   window.ccNativeInput?.sync();
+}
+
+const continuityRequests = new Map();
+let continuityPoll = null;
+function syncTerminalContinuity() {
+  if (!state.sessionsLoaded || document.hidden || tokenPromptOpen ||
+      (window.ccWorkspace && !window.ccWorkspace.canResume)) return;
+  let pending = false;
+  for (const pane of [...panes]) {
+    const sid = pane.tab?.id || pane.savedId;
+    const tab = state.tabs.find(item => item.id === sid);
+    if (!tab) continue;
+    pane.tab = tab;
+    if (tab.alive) {
+      if (!pane.term) attachTerminal(tab, pane, { passive: true });
+      continue;
+    }
+    const recovery = tab.continuity;
+    if (!recovery) continue;
+    const busy = ["queued", "restoring"].includes(recovery.state);
+    const request = continuityRequests.get(sid);
+    const waiting = request?.expected === recovery.expected && request?.pending;
+    pending = pending || busy || waiting;
+    const label = pane.host.querySelector(".ws-offline-pane > span");
+    const action = pane.host.querySelector(".ws-offline-pane > button");
+    if (label) {
+      const message = busy ? (recovery.state === "queued" ? "等待恢复" : "正在恢复原会话") :
+        recovery.message || (waiting ? "等待恢复" : request?.message) || "会话已停止";
+      if (label.textContent !== message) label.textContent = message;
+      label.setAttribute("role", "status");
+      if (action) action.disabled = busy || waiting;
+    }
+    if (!recovery.eligible || !recovery.expected || request?.expected === recovery.expected) continue;
+    const entry = { expected: recovery.expected, pending: true };
+    continuityRequests.set(sid, entry);
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 8000);
+    // Queue admission is fast. Never await a native startup in the navigation lock.
+    api("/api/sessions/" + encodeURIComponent(sid) + "/restore", {
+      method: "POST", body: JSON.stringify({ expected: recovery.expected }), signal: controller.signal,
+    }, 0).catch(error => {
+      entry.message = error.name === "AbortError" ? "恢复请求状态待确认，请刷新检查" : String(error.message);
+    }).finally(() => { clearTimeout(timeout); entry.pending = false; loadTabs(); });
+    pending = true;
+    if (action) action.disabled = true;
+    if (label) label.textContent = "等待恢复";
+  }
+  if (pending && !continuityPoll) continuityPoll = setTimeout(() => {
+    continuityPoll = null; if (!document.hidden && !tokenPromptOpen) loadTabs();
+  }, 2000);
 }
 function mini(label, cls, onclick, title) {
   const b = document.createElement("button");
@@ -522,6 +592,7 @@ document.addEventListener("keydown", event => {
 }, true);
 mqMobile.addEventListener("change", () => closeRecentSessions(false));
 function maybeRestoreActiveTab() {
+  if (document.documentElement.dataset.ui === "bridge") return;
   if (startupRestoreTried || panes.length || tokenPromptOpen) return;
   const alive = (state.tabs || []).filter((t) => t.alive);
   if (!alive.length) return;
@@ -684,7 +755,7 @@ function pickGroup(current) {
     };
     btns.appendChild(cancel); btns.appendChild(nw);
     function done(v) { document.removeEventListener("keydown", onKey); back.remove(); resolve(v); }
-    function onKey(e) { if (e.key === "Escape") done(undefined); }
+    function onKey(e) { if (e.key === "Escape" && !e.isComposing && topModal() === back) { e.preventDefault(); e.stopImmediatePropagation(); done(undefined); } }
     back.appendChild(box); document.body.appendChild(back);
     back.onclick = (e) => { if (e.target === back) done(undefined); };
     document.addEventListener("keydown", onKey);
@@ -703,19 +774,24 @@ async function renameTab(t) {
   if (name === null) return;
   const nm = name.trim();
   try {
-    await api("/api/sessions/" + t.id + "/rename", { method: "POST", body: JSON.stringify({ name: nm }) });
+    const result = await api("/api/sessions/" + t.id + "/rename", { method: "POST", body: JSON.stringify({ name: nm }) });
     await loadTabs();
+    const savedName = typeof result.name === "string" ? result.name : nm;
+    const tab = state.tabs.find(item => item.id === t.id);
+    if (tab) tab.name = savedName;
     const rp = paneOfTab(t.id);
     if (rp) {
-      rp.tab.name = nm;
+      rp.tab.name = savedName;
       paneHeader(rp);
     }
     if (rp && rp === active) {
-      const disp = nm || ("cc_" + t.id);
+      const disp = rp.tab.name || rp.tab.title || ("cc_" + t.id);
       document.getElementById("term-title").textContent = disp;
       document.getElementById("topbar-title").textContent = disp;
       setTitlebar(disp + "  —  cc_" + t.id);
     }
+    renderTabs();
+    window.ccWorkspace?.sessionsChanged();
   } catch (e) { showToast("重命名失败 · " + e.message); }
 }
 
@@ -750,15 +826,35 @@ async function deleteTab(id) {
 let dirCurrentPath = "";
 let dirCurrentData = null;
 let dirLoadSeq = 0;
-function openDirModal() {
+let dirLaunchContext = null;
+function openDirModal(options) {
+  if (sessionLaunchBusy) return;
+  dirLaunchContext = typeof options?.onCreated === "function" ? options : null;
+  document.getElementById("dir-modal-title").textContent = dirLaunchContext ? "新建分屏终端 · 选择目录" : "新终端 · 选择目录";
   openLayer(document.getElementById("dir-modal"), true);
   const search = document.getElementById("dir-search");
   if (search) search.value = "";
-  loadDir(state.defaultDir || "");
+  loadDir(dirLaunchContext?.cwd || state.defaultDir || "");
   setTimeout(() => { if (search) search.focus(); }, 40);
 }
-function closeDirModal() { closeLayer(document.getElementById("dir-modal")); }
+function closeDirModal(completed = false) {
+  if (sessionLaunchBusy && completed !== true) return;
+  const modal = document.getElementById("dir-modal");
+  if (!layerOpen(modal)) return;
+  const context = dirLaunchContext;
+  dirLaunchContext = null;
+  return new Promise(resolve => closeLayer(modal, () => {
+    if (completed !== true) context?.onCancel?.();
+    resolve();
+  }));
+}
 document.getElementById("dir-close").onclick = closeDirModal;
+document.getElementById("dir-modal").addEventListener("click", event => { if (event.target.id === "dir-modal") closeDirModal(); });
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !event.isComposing && topModal() === document.getElementById("dir-modal")) {
+    event.preventDefault(); event.stopImmediatePropagation(); closeDirModal();
+  }
+}, true);
 document.getElementById("new-term").onclick = openDirModal;
 document.getElementById("empty-new").onclick = openDirModal;
 document.getElementById("new-group").onclick = newManualGroup;
@@ -770,6 +866,9 @@ document.getElementById("dir-search").oninput = () => { if (dirCurrentData) rend
 
 async function loadDir(path) {
   const seq = ++dirLoadSeq;
+  const modeRow = document.getElementById("mode-row");
+  modeRow.classList.add("hidden");
+  delete modeRow.dataset.cwd;
   const list = document.getElementById("dir-list");
   list.setAttribute("aria-busy", "true");
   list.innerHTML = '<div class="gpu-loading">读取目录</div>';
@@ -828,7 +927,7 @@ function renderDir(data) {
   const modeRow = document.getElementById("mode-row");
   document.getElementById("dir-mkdir").classList.toggle("hidden", !data.path);
   if (data.path) { cur.textContent = data.path; modeRow.classList.remove("hidden"); modeRow.dataset.cwd = data.path; }
-  else { cur.textContent = "选择一个目录后即可在此开终端"; modeRow.classList.add("hidden"); }
+  else { cur.textContent = "选择一个目录后即可在此开终端"; modeRow.classList.add("hidden"); delete modeRow.dataset.cwd; }
 
   renderDirEntries(data);
 }
@@ -940,22 +1039,31 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
   b.onclick = async () => {
     if (sessionLaunchBusy) return;
     const cwd = document.getElementById("mode-row").dataset.cwd;
+    if (!cwd) return;
+    const context = dirLaunchContext;
     const buttons = Array.from(document.querySelectorAll(".mode-btn"));
     const originalLabel = b.textContent;
     sessionLaunchBusy = true;
     buttons.forEach((button) => { button.disabled = true; });
     setButtonBusy(b, true);
     b.textContent = "正在创建";
+    let created = false;
     try {
-      const tab = await api("/api/sessions", { method: "POST", body: JSON.stringify({ cwd, type: b.dataset.type || "claude", mode: b.dataset.mode || "new" }) });
-      closeDirModal();
-      state.activeId = tab.id;
-      saveActiveId(tab.id);
-      attachTerminal(tab);
+      const tab = await api("/api/sessions", { method: "POST", body: JSON.stringify({ cwd, type: b.dataset.type || "claude", mode: b.dataset.mode || "new" }) }, 0);
+      created = true;
+      await closeDirModal(true);
+      if (!context) {
+        state.activeId = tab.id;
+        saveActiveId(tab.id);
+        attachTerminal(tab);
+      }
       await loadTabs();
       await window.ccWorkspace?.terminalCreated(tab);
+      if (context) await context.onCreated(tab);
       closeDrawer();
-    } catch (e) { showToast("创建失败 · " + e.message); }
+    } catch (e) {
+      showToast((created ? "终端已创建，界面更新失败，请刷新列表 · " : e.name === "TypeError" ? "创建结果未确认，请先刷新会话列表再重试 · " : "创建失败 · ") + e.message);
+    }
     finally {
       sessionLaunchBusy = false;
       buttons.forEach((button) => { button.disabled = false; });
@@ -966,7 +1074,16 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
 });
 
 // ---- open / restart a tab --------------------------------------------------
+let copySessionIdBusy = false;
+function updateCopySessionIdControl() {
+  const button = document.getElementById("btn-copy-session-id"), tab = active?.tab;
+  if (!button) return;
+  button.disabled = copySessionIdBusy || !tab?.id;
+  button.title = "复制会话 ID";
+}
 function updateRestartControls() {
+  updateCopySessionIdControl();
+  renderAllCodexUsage();
   const supported = tab => tab && ["codex", "claude", "opencode"].includes(tab.resumeAgent || tab.type);
   for (const pane of panes) {
     const button = pane.el.querySelector(".pane-restart");
@@ -986,6 +1103,7 @@ function updateRestartControls() {
   document.getElementById("btn-stop").disabled = !tab || restartRequests.has(tab.id);
   updateInterruptControl();
   updateQuickCommandState();
+  window.ccPermissions?.sync();
 }
 function updateInterruptControl() {
   const button = document.getElementById("btn-interrupt"), p = active;
@@ -1030,7 +1148,11 @@ async function requestRestartTab(tab) {
         method: "POST", body: JSON.stringify({ sessionId: identifier.trim() }),
       });
     }
-    if (!preview.ready) { showToast(preview.reason || "此会话暂时不能自动恢复"); return; }
+    if (!preview.ready) {
+      if (!tab.alive && window.ccRecovery) await openTab(tab);
+      else showToast(preview.reason || "此会话暂时不能自动恢复");
+      return;
+    }
     const message = (preview.running ? "这会退出当前程序，可能中断正在执行的任务，并丢弃未发送的输入。" : "") +
       "将恢复原会话 " + preview.sessionId + "，恢复后等待输入，不自动发送“继续”。";
     if (!(await uiDialog({ title: "重启并恢复「" + name + "」", message, okLabel: "重启并恢复", icon: "?" }))) return;
@@ -1047,6 +1169,10 @@ async function requestRestartTab(tab) {
     if (pane && targetUnchanged()) { pane.tab = restored; paneHeader(pane); }
     showToast("已恢复「" + name + "」的原会话");
   } catch (error) {
+    if (!tab.alive && error.status === 409 && restartRequests.get(id) === "checking" && window.ccRecovery) {
+      await openTab(tab);
+      return;
+    }
     showToast("重启未完成 · " + error.message);
   } finally {
     restartRequests.delete(id);
@@ -1064,16 +1190,26 @@ async function openTab(tab) {
     const mobile = mqMobile.matches;
     const targetPane = active, targetGeneration = active?.gen;
     const ep = paneOfTab(tab.id);
-    if (ep && tab.alive) { focusPane(ep, !COARSE); closeDrawer(); return true; }
+    if (ep?.term && tab.alive) { focusPane(ep, !COARSE); closeDrawer(); return true; }
     let t = tab;
     if (!t.alive) {
-      const name = tab.name || tab.title || tabName(tab);
-      if (!(await uiConfirm("启动「" + name + "」？", tab.type === "shell" ? "将在原目录启动终端。" : "将检查原会话绑定后启动并恢复；无法确认原会话时不会新建替代对话。"))) return false;
-      if (mobile !== mqMobile.matches || (window.ccWorkspace && !(await window.ccWorkspace.beforeOpen(tab)))) return false;
-      try { t = await api("/api/sessions/" + t.id + "/start", { method: "POST" }); }
+      const unchanged = () => mobile === mqMobile.matches && active === targetPane && active?.gen === targetGeneration;
+      try {
+        if (window.ccRecovery && ["codex", "claude", "opencode"].includes(tab.resumeAgent || tab.type)) t = await window.ccRecovery.start(tab, unchanged);
+        else {
+          if (!(await uiConfirm("启动「" + tabName(tab) + "」？", "将在原目录启动终端。")) || !unchanged()) return false;
+          t = await api("/api/sessions/" + tab.id + "/start", { method: "POST" });
+        }
+        if (!t) return false;
+      }
       catch (e) { showToast("启动失败 · " + e.message); return false; }
       if (mobile !== mqMobile.matches || active !== targetPane || active?.gen !== targetGeneration) {
         await loadTabs(); return false;
+      }
+      const connected = paneOfTab(t.id);
+      if (connected && !connected.dead && connected.ws?.readyState === 1) {
+        connected.tab = t; paneHeader(connected); focusPane(connected, !COARSE);
+        await loadTabs(); closeDrawer(); return true;
       }
     }
     state.activeId = t.id;
@@ -1088,7 +1224,7 @@ async function openTab(tab) {
 // ---- font size -------------------------------------------------------------
 function getFont() {
   let n = parseInt(localStorage.getItem("cc_fontsize") || "", 10);
-  if (!n) n = mqMobile.matches ? 11 : 13;
+  if (!n) n = mqMobile.matches ? 11 : (document.documentElement.dataset.ui === "bridge" ? 12 : 13);
   return Math.min(20, Math.max(8, n));
 }
 function setFont(n) {
@@ -1143,7 +1279,7 @@ function updateCtrlCap() { const c = document.getElementById("cap-ctrl"); if (c)
 let _dropWarn = 0;
 function sendInputTo(pane, data) {
   const ws = pane && pane.ws;
-  if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "input", data })); return; }
+  if (ws && ws.readyState === 1) { ws.send(JSON.stringify({ type: "input", data })); window.ccWorkspace?.interacted(pane.tab?.id); return; }
   // Never swallow keystrokes silently — that reads as "this pane is frozen".
   const now = Date.now();
   if (now - _dropWarn > 2500) { _dropWarn = now; showToast("这一格还没连上,输入未送出"); }
@@ -1487,13 +1623,17 @@ function wireGutter(g, axis, idx) {
     g.addEventListener("pointercancel", onUp);
   });
 }
-function cyclePaneDir() {
-  const order = ["auto", "row", "col"];
-  const next = order[(order.indexOf(paneDirMode()) + 1) % order.length];
+function setPaneDirection(next) {
+  if (!["auto", "row", "col"].includes(next) || (window.ccWorkspace && !window.ccWorkspace.ready)) return;
   localStorage.setItem("cc_pane_dir", next);
   applyPaneDir();
+  window.ccWorkspace?.layoutChanged();
   showToast("分屏方向：" + (next === "auto" ? "自动" : next === "row" ? "左右并排" : "上下堆叠"));
   setTimeout(refitAll, 80);
+}
+function cyclePaneDir() {
+  const order = ["auto", "row", "col"];
+  setPaneDirection(order[(order.indexOf(paneDirMode()) + 1) % order.length]);
 }
 function layoutPanes() {
   const box = document.getElementById("panes");
@@ -1596,59 +1736,72 @@ function paneHeader(p) {
   if (nm) { nm.textContent = disp; nm.title = p.tab ? ("cc_" + p.tab.id + " · " + (p.tab.cwd || "")) : ""; }
 }
 
-// Keep one quiet, account-wide limit below the focused Codex pane. The backend
+// One account-wide limit in the toolbar, only for the focused Codex pane. The backend
 // owns both the cross-process refresh lock and the authoritative expiry time.
 let codexUsageData = null;
 let codexUsagePending = null;
 let codexUsageTimer = null;
+let codexUsageClock = null;
+const codexQuotaButtons = ["codex-quota", "codex-quota-m"].map(id => document.getElementById(id));
 
 function codexResetLabel(seconds) {
-  const d = new Date(Number(seconds) * 1000);
-  if (!Number.isFinite(d.getTime())) return { short: "—", full: "重置时间未知" };
-  const now = new Date();
-  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  const hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-  const short = sameDay ? hm : (d.getMonth() + 1) + "/" + d.getDate() + " " + hm;
-  return { short: short + " 重置", full: d.toLocaleString("zh-CN") + " 重置" };
+  const at = Number(seconds) * 1000;
+  if (!Number.isFinite(at) || at <= 0) return { short: "重置时间未知", full: "重置时间未知" };
+  const remaining = at - Date.now();
+  if (remaining <= 0) return { short: "等待刷新", full: "重置时间已到，等待用量刷新" };
+  // Round up to hours; do not claim the limit has reset during its final hour.
+  const hours = Math.ceil(remaining / 3600000);
+  const label = Math.floor(hours / 24) + "d" + hours % 24 + "h后重置";
+  return { short: label, full: "预计 " + label };
 }
 function codexPercent(value) {
   const n = Math.max(0, Math.min(100, Number(value) || 0));
   return Math.abs(n - Math.round(n)) < 0.05 ? String(Math.round(n)) : n.toFixed(1);
 }
-function renderCodexUsage(p) {
-  if (!p || !p.usage) return;
-  const isCodex = !!(p === active && p.tab && p.tab.type === "codex");
-  p.usage.classList.toggle("hidden", !isCodex);
-  if (!isCodex) return;
-
-  const window = codexUsageData && codexUsageData.window;
-  p.usage.classList.toggle("is-stale", !!(codexUsageData && codexUsageData.stale));
-  if (!window) {
-    const failed = codexUsageData && codexUsageData.error;
-    p.usage.setAttribute("aria-busy", String(!failed));
-    p.usage.innerHTML = '<div class="codex-usage-state">' +
-      (failed ? '<span class="codex-usage-error" aria-hidden="true">!</span>' : '<span class="codex-usage-spinner" aria-hidden="true"></span>') +
-      '<span>' + (failed ? "Codex 用量暂时不可用" : "正在读取 Codex 用量…") + '</span>' +
-      (failed ? '<button class="codex-usage-retry" type="button" title="重新读取" aria-label="重新读取 Codex 用量">↻</button>' : "") +
-      '</div>';
-    requestAnimationFrame(() => refit(p));
-    return;
+function renderAllCodexUsage() {
+  clearTimeout(codexUsageClock);
+  codexUsageClock = null;
+  const isCodex = !!(active?.tab?.type === "codex");
+  const quota = codexUsageData?.window;
+  const raw = quota?.remainingPercent;
+  const known = (typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "")) && Number.isFinite(Number(raw));
+  const remaining = known ? Math.max(0, Math.min(100, Number(raw))) : 0;
+  const failed = !!codexUsageData?.error;
+  const stale = !!quota && !!(codexUsageData?.stale || failed);
+  const reset = codexResetLabel(quota?.resetsAt);
+  const detail = known ? "Codex 剩余 " + codexPercent(remaining) + "% · " + reset.full +
+    (stale ? " · 缓存数据，更新暂未成功" : "") :
+    failed ? "Codex 用量暂时不可用，稍后自动重试" : codexUsageData ? "Codex 用量未知" : "正在读取 Codex 用量";
+  const icon = uiIcon("Battery");
+  const content = '<span class="quota-battery-main"><span class="quota-battery-icon' + (icon ? "" : " hidden") +
+    '" aria-hidden="true">' + icon + '<i></i></span><span class="quota-battery-value">' +
+    (known ? codexPercent(remaining) + "%" : "--") + '</span></span>' +
+    '<span class="quota-battery-reset">' + esc(quota ? reset.short : failed ? "暂不可用" : codexUsageData ? "用量未知" : "读取中") + '</span>';
+  for (const button of codexQuotaButtons) {
+    button.classList.toggle("hidden", !isCodex);
+    button.classList.toggle("warning", known && remaining > 10 && remaining <= 30);
+    button.classList.toggle("critical", known && remaining <= 10);
+    button.classList.toggle("is-stale", stale);
+    button.style.setProperty("--battery-level", remaining + "%");
+    button.setAttribute("aria-busy", String(isCodex && !codexUsageData));
+    button.setAttribute("aria-label", detail);
+    button.title = detail;
+    button.dataset.tooltip = detail;
+    if (button.innerHTML !== content) button.innerHTML = content;
+    if (tooltipOwner === button) {
+      if (!isCodex) hideTooltip();
+      else if (!tooltip.classList.contains("hidden")) placeTooltip(button);
+    }
   }
-
-  p.usage.setAttribute("aria-busy", "false");
-  const remaining = Math.max(0, Math.min(100, Number(window.remainingPercent) || 0));
-  const tone = remaining <= 10 ? " critical" : remaining <= 30 ? " warning" : "";
-  const reset = codexResetLabel(window.resetsAt);
-  const title = "Codex · 已用 " + codexPercent(window.usedPercent) + "% · " + reset.full;
-  const aria = "Codex 剩余 " + codexPercent(remaining) + "%，" + reset.full;
-  p.usage.innerHTML = '<div class="codex-usage-row' + tone + '" title="' + esc(title) + '" aria-label="' + esc(aria) + '">' +
-    '<span class="codex-usage-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + remaining + '"><i style="width:' + remaining + '%"></i></span>' +
-    '<span class="codex-usage-value">' + codexPercent(remaining) + '%</span>' +
-    '<span class="codex-usage-reset">' + esc(reset.short) + '</span>' +
-    '</div>';
-  requestAnimationFrame(() => refit(p));
+  // Countdown repaint only: never poll the account or resize the terminal here.
+  if (isCodex && document.visibilityState === "visible" && Number(quota?.resetsAt) * 1000 > Date.now()) {
+    codexUsageClock = setTimeout(renderAllCodexUsage, 60000);
+  }
 }
-function renderAllCodexUsage() { panes.forEach(renderCodexUsage); }
+for (const button of codexQuotaButtons) {
+  button.addEventListener("mousedown", e => e.preventDefault());
+  button.onclick = () => { if (active?.tab?.type === "codex") showToast(button.getAttribute("aria-label")); };
+}
 function scheduleCodexUsageRefresh() {
   clearTimeout(codexUsageTimer);
   codexUsageTimer = null;
@@ -1669,7 +1822,7 @@ async function refreshCodexUsage(force) {
     return;
   }
   const nextAt = Number(codexUsageData && codexUsageData.nextRefreshAt) * 1000;
-  if (!force && codexUsageData && codexUsageData.window && Number.isFinite(nextAt) && Date.now() < nextAt) {
+  if (!force && codexUsageData && Number.isFinite(nextAt) && Date.now() < nextAt) {
     renderAllCodexUsage();
     scheduleCodexUsageRefresh();
     return;
@@ -1680,8 +1833,9 @@ async function refreshCodexUsage(force) {
     try {
       codexUsageData = await api("/api/codex/usage");
     } catch (e) {
-      if (codexUsageData && !codexUsageData.error) codexUsageData.stale = true;
-      else codexUsageData = { window: null, error: true };
+      // A transport failure has no server deadline; avoid retries on every refocus.
+      codexUsageData = { ...codexUsageData, error: true, stale: !!codexUsageData?.window,
+        nextRefreshAt: Date.now() / 1000 + 10 * 60 };
     } finally {
       codexUsagePending = null;
       renderAllCodexUsage();
@@ -1691,7 +1845,11 @@ async function refreshCodexUsage(force) {
   return codexUsagePending;
 }
 function focusPane(p, focusTerminal = true) {
-  if (!p || p === active) { if (p && focusTerminal) try { p.term && p.term.focus(); } catch (e) {} return; }
+  if (!p || p === active) {
+    if (p) window.ccWorkspace?.revealActiveSession();
+    if (p && focusTerminal) try { p.term && p.term.focus(); } catch (e) {}
+    return;
+  }
   active = p;
   updateRestartControls();
   updateQuickCommandState();
@@ -1709,6 +1867,11 @@ function focusPane(p, focusTerminal = true) {
     state.activeId = p.tab.id;
     saveActiveId(p.tab.id);
     renderTabs();
+  } else {
+    state.activeId = null;
+    document.getElementById("term-title").textContent = p.savedId || "空白分屏";
+    document.getElementById("term-path").textContent = "";
+    setTitlebar();
   }
   window.ccWorkspace?.focusChanged();
   window.ccAppearance?.sync();
@@ -1719,6 +1882,7 @@ function togglePaneMaximized(p) {
   maximizedPane = maximizedPane === p ? null : p;
   focusPane(p, false);
   layoutPanes();
+  savePaneLayout();
 }
 
 // Swap two cells' positions. We move the pane ELEMENTS (never re-create the
@@ -1749,14 +1913,13 @@ function makePane() {
     '<button class="pane-expand" title="放大此窗" aria-label="放大此窗" aria-pressed="false">⛶</button>' +
     '<button class="pane-restart hidden" title="重启并恢复原会话" aria-label="重启并恢复原会话"></button>' +
     '<button class="pane-swap" title="与下一格交换位置">⇄</button>' +
-    '<button class="pane-x" title="关闭此格">✕</button></div>' +
-    '<div class="pane-host"></div>' +
-    '<div class="codex-usage hidden" aria-live="polite"></div>';
+    '<button class="pane-x" title="关闭此分屏（后台继续运行）" aria-label="关闭此分屏">✕</button></div>' +
+    '<div class="pane-host"></div>';
   setCommandIcon(el.querySelector(".pane-expand"), "Maximize2");
   setCommandIcon(el.querySelector(".pane-restart"), "RotateCw");
   setCommandIcon(el.querySelector(".pane-swap"), "ArrowLeftRight");
   setCommandIcon(el.querySelector(".pane-x"), "X");
-  const p = { el, host: el.querySelector(".pane-host"), usage: el.querySelector(".codex-usage"), term: null, fit: null, ws: null, tab: null, dead: false, closedByUser: false, gen: 0, _reconnectTimer: null, _disposeWheel: null, _disposeIme: null };
+  const p = { el, host: el.querySelector(".pane-host"), term: null, fit: null, ws: null, tab: null, dead: false, closedByUser: false, gen: 0, _reconnectTimer: null, _disposeWheel: null, _disposeIme: null };
   el.querySelector(".pane-expand").onclick = e => { e.stopPropagation(); togglePaneMaximized(p); };
   el.querySelector(".pane-restart").onclick = e => { e.stopPropagation(); requestRestartTab(p.tab); };
   el.querySelector(".pane-restart").addEventListener("mousedown", e => e.stopPropagation());
@@ -1770,13 +1933,6 @@ function makePane() {
   const focus = () => focusPane(p);
   el.addEventListener("mousedown", focus);
   el.addEventListener("touchstart", () => focusPane(p, false), { passive: true });
-  p.usage.addEventListener("click", (e) => {
-    const retry = e.target.closest && e.target.closest(".codex-usage-retry");
-    if (!retry) return;
-    e.preventDefault(); e.stopPropagation();
-    codexUsageData = null;
-    refreshCodexUsage(true);
-  });
 
   // drag the title bar onto another cell to swap the two
   const bar = el.querySelector(".pane-bar");
@@ -1809,10 +1965,10 @@ function makePane() {
   panes.push(p);
   if (workspaceResizeObserver) workspaceResizeObserver.observe(p.host);
   showPaneEmpty(p);
+  window.ccWorkspace?.paneCreated(p);
   return p;
 }
 function showPaneEmpty(p) {
-  if (p.usage) p.usage.classList.add("hidden");
   p.host.innerHTML = '<div class="pane-empty"><div class="big">＋</div><div>点这里,或从左侧列表选一个终端</div></div>';
   const ph = p.host.querySelector(".pane-empty");
   if (ph) ph.onclick = () => { focusPane(p, false); window.ccWorkspace ? window.ccWorkspace.openSplitPicker() : openDirModal(); };
@@ -1828,10 +1984,13 @@ function teardownPane(p, keepEl) {
   p.gen = (p.gen || 0) + 1;
   p.dead = true; p.closedByUser = true;
   if (p._reconnectTimer) { clearTimeout(p._reconnectTimer); p._reconnectTimer = null; }
+  p._disposeConnection?.();
+  p._disposeConnection = null; p._resumeConnection = null;
   if (!keepEl && workspaceResizeObserver) workspaceResizeObserver.unobserve(p.host);
   p._lastResize = null;
   try { p._disposeWheel && p._disposeWheel(); } catch (e) {}
   try { p._disposeIme && p._disposeIme(); } catch (e) {}
+  try { p._disposeMouseSel && p._disposeMouseSel(); } catch (e) {}
   try { p._disposeTouchSel && p._disposeTouchSel(); } catch (e) {}
   try { p._disposeTouchScroll && p._disposeTouchScroll(); } catch (e) {}
   try { p.ws && p.ws.close(); } catch (e) {}
@@ -1996,7 +2155,7 @@ function attachTerminalWheelHandler(term, host, pane) {
 // So we take the insertText path ourselves, before xterm sees it, and
 // preventDefault: the textarea value never changes, so xterm's diff fallback
 // finds nothing and the `input` event is never dispatched at all — no double
-// send. Compositions are left strictly alone so pinyin candidates still work.
+// send. Composition commits are handled separately so candidates still work.
 function attachImeInput(term, pane) {
   const ta = term.textarea;
   if (!ta) return () => {};
@@ -2011,15 +2170,57 @@ function attachImeInput(term, pane) {
   // printable chars that fall through to _keyPress are NOT cancelled, so their
   // beforeinput still reaches us after xterm already sent the character. A
   // keypress therefore arms a one-shot skip, consumed by the next beforeinput.
-  let skipNext = false;
-  const onKeyDown = () => { skipNext = false; };
-  const onKeyPress = () => { skipNext = true; };
+  let sentKeypress = null, commitEcho = null, compositionEpoch = 0, imeDisposed = false;
+  const onKeyDown = () => { sentKeypress = null; commitEcho = null; };
+  const helper = term._core?._compositionHelper;
+  let committed = null, originalCompositionEnd = null, originalTextareaDiff = null;
+  const onCompositionStart = () => { compositionEpoch++; committed = null; sentKeypress = null; commitEcho = null; };
+  const onCompositionEnd = ev => { committed = typeof ev.data === "string" ? ev.data : null; };
+  if (helper && typeof helper.compositionend === "function" && "_isComposing" in helper && helper._compositionView) {
+    originalCompositionEnd = helper.compositionend;
+    helper.compositionend = function() {
+      const text = committed; committed = null;
+      if (!text || !this._isComposing) return originalCompositionEnd.call(this);
+      // xterm 5.5 defers reading textarea.value; a subsequent composition can
+      // start first, causing its unfinished pinyin to be sent with this commit.
+      this._compositionView.classList.remove("active");
+      this._isComposing = false; this._isSendingComposition = false; this._dataAlreadySent = "";
+      deliverTo(pane, text);
+      const echo = { text }; commitEcho = echo;
+      queueMicrotask(() => { if (commitEcho === echo) commitEcho = null; });
+    };
+    if (typeof helper._handleAnyTextareaChanges === "function" && helper._coreService) {
+      originalTextareaDiff = helper._handleAnyTextareaChanges;
+      helper._handleAnyTextareaChanges = function() {
+        const previous = ta.value, epoch = compositionEpoch;
+        setTimeout(() => {
+          if (imeDisposed || epoch !== compositionEpoch || this.isComposing) return;
+          const current = ta.value, added = current.replace(previous, "");
+          this._dataAlreadySent = added;
+          if (current.length > previous.length) this._coreService.triggerDataEvent(added, true);
+          else if (current.length < previous.length) this._coreService.triggerDataEvent("\x7f", true);
+          else if (current !== previous) this._coreService.triggerDataEvent(current, true);
+        }, 0);
+      };
+    }
+  }
+  const onKeyPress = (ev) => {
+    // xterm registers its listener before ours. A keypress from an IME can
+    // occur without xterm actually sending a character; only suppress the
+    // following beforeinput when xterm handled this keypress.
+    const handled = term._core?._keyPressHandled;
+    const sent = typeof handled === "boolean" ? handled : !!ev.charCode && !ev.ctrlKey && !ev.metaKey;
+    const code = ev.charCode || (ev.which == null ? ev.keyCode : ev.which);
+    sentKeypress = sent && code ? String.fromCharCode(code) : null;
+  };
 
   const onBeforeInput = (ev) => {
-    const armed = skipNext; skipNext = false;
-    if (armed) return;                       // xterm's _keyPress already sent it
-    if (ev.isComposing) return;              // mid-composition belongs to xterm
+    const sent = sentKeypress; sentKeypress = null;
+    if (ev.isComposing || helper?.isComposing) return; // mid-composition belongs to xterm
     const t = ev.inputType || "";
+    if (commitEcho && t === "insertText" && ev.data === commitEcho.text && ev.cancelable) {
+      commitEcho = null; ev.preventDefault(); return;
+    }
     if (t.indexOf("Composition") >= 0) return;
     let data;
     if (t === "insertText") data = ev.data;
@@ -2027,18 +2228,47 @@ function attachImeInput(term, pane) {
     else if (t === "deleteContentBackward") data = "\x7f";
     else return;                             // paste, replacements, … stay with xterm
     if (!data) return;
+    if (!ev.cancelable) { sentKeypress = sent; return; }
+    // Even handled spaces can still emit input after a cancelable beforeinput.
+    // Cancel that edit rather than losing the marker and delivering it twice.
+    if (data === sent) { ev.preventDefault(); return; }
     ev.preventDefault();                     // no textarea change ⇒ no `input` ⇒ no dupe
     deliverTo(pane, data);
   };
 
+  const inputHost = term.element;
+  const onInput = (ev) => {
+    if (ev.target !== ta || ev.isComposing || helper?.isComposing || ev.inputType !== "insertText" || !ev.data) return;
+    // Observe the committed edit before xterm's capture listener. Its keydown
+    // guard can reject this event, and the delayed 229 diff can lose it when
+    // another composition starts. Invalidate that diff to avoid double sends.
+    compositionEpoch++;
+    const sent = sentKeypress; sentKeypress = null;
+    const echoed = commitEcho?.text === ev.data;
+    commitEcho = null;
+    ev.stopPropagation();
+    if (ev.cancelable) ev.preventDefault();
+    if (ev.data !== sent && !echoed) deliverTo(pane, ev.data);
+  };
+
+  inputHost.addEventListener("input", onInput, true);
   ta.addEventListener("keydown", onKeyDown, true);
   ta.addEventListener("keypress", onKeyPress, true);
   ta.addEventListener("beforeinput", onBeforeInput, true);
+  ta.addEventListener("compositionstart", onCompositionStart, true);
+  ta.addEventListener("compositionend", onCompositionEnd, true);
   return () => {
     try {
+      imeDisposed = true; compositionEpoch++;
+      inputHost.removeEventListener("input", onInput, true);
       ta.removeEventListener("keydown", onKeyDown, true);
       ta.removeEventListener("keypress", onKeyPress, true);
       ta.removeEventListener("beforeinput", onBeforeInput, true);
+      ta.removeEventListener("compositionstart", onCompositionStart, true);
+      ta.removeEventListener("compositionend", onCompositionEnd, true);
+      if (helper && "_isSendingComposition" in helper) helper._isSendingComposition = false;
+      if (originalCompositionEnd) helper.compositionend = originalCompositionEnd;
+      if (originalTextareaDiff) helper._handleAnyTextareaChanges = originalTextareaDiff;
     } catch (e) {}
   };
 }
@@ -2062,7 +2292,13 @@ const TERM_THEME = {
   },
 };
 function termTheme(t = currentTheme()) {
-  const base = TERM_THEME[t] || TERM_THEME.dark;
+  let base = TERM_THEME[t] || TERM_THEME.dark;
+  if (document.documentElement.dataset.ui === "bridge" && document.documentElement.dataset.terminalStyle !== "glass") {
+    // xterm's contrast correction needs the real opaque background, not a
+    // transparent black that makes dark text too pale on the light surface.
+    const background = getComputedStyle(document.documentElement).getPropertyValue("--term-bg").trim();
+    if (background) base = { ...base, background };
+  }
   return window.ccAppearance?.terminalTheme(base, t) || base;
 }
 function setTitlebar(t) {
@@ -2076,8 +2312,8 @@ function setTitlebar(t) {
 }
 
 // Open `tab` inside a pane (defaults to the focused pane; creates the first one).
-function attachTerminal(tab, pane) {
-  closeQuickCommands(false);
+function attachTerminal(tab, pane, { passive = false } = {}) {
+  if (!passive) closeQuickCommands(false);
   document.getElementById("empty").classList.add("hidden");
   document.getElementById("term-view").classList.remove("hidden");
 
@@ -2085,22 +2321,27 @@ function attachTerminal(tab, pane) {
   if (!p) p = makePane();
   if (p.term) teardownPane(p, true);            // reuse the cell: drop its old terminal
   p.dead = false; p.closedByUser = false;
+  p.savedId = null;
   p.tab = tab;
-  state.activeId = tab.id;
-  saveActiveId(tab.id);
-  renderRecentSessions();
+  if (!passive) {
+    state.activeId = tab.id;
+    saveActiveId(tab.id);
+    renderRecentSessions();
+  }
   p.host.innerHTML = "";
-  active = p;
+  if (!passive) active = p;
   paneHeader(p);
   updateRestartControls();
   renderAllCodexUsage();
   scheduleCodexUsageRefresh();
-  if (tab.type === "codex") refreshCodexUsage(false);
+  if (!passive && tab.type === "codex") refreshCodexUsage(false);
   const _disp = tab.name || tab.title || tab.id;
-  document.getElementById("term-title").textContent = _disp;
-  document.getElementById("term-path").textContent = tab.cwd || "";
-  document.getElementById("topbar-title").textContent = _disp;
-  setTitlebar(_disp + "  —  cc_" + tab.id);
+  if (!passive || active === p) {
+    document.getElementById("term-title").textContent = _disp;
+    document.getElementById("term-path").textContent = tab.cwd || "";
+    document.getElementById("topbar-title").textContent = _disp;
+    setTitlebar(_disp + "  —  cc_" + tab.id);
+  }
 
   const term = new Terminal({
     cursorBlink: true,
@@ -2134,9 +2375,9 @@ function attachTerminal(tab, pane) {
   // or when clipboard access fails. Interruption is a separate toolbar command.
   applyKbdMode(term);
   installSelectMode(term);
+  const disposeMouseSel = attachMouseSelection(term, host, p);
   const disposeTouchSel = attachTouchSelection(term, host, p);
   const disposeTouchScroll = attachTouchScroll(term, host, p);
-  installSelectMode(term);
   // Right-click copies the selection. With no selection we stay out of the way
   // and let the browser's own menu appear.
   host.addEventListener("contextmenu", (ev) => {
@@ -2146,6 +2387,9 @@ function attachTerminal(tab, pane) {
     copyText(hit.text).then((ok) => showToast(ok ? "已复制选中内容 (" + hit.text.length + " 字)" : "复制失败,浏览器拒绝了剪贴板访问"));
   });
   term.attachCustomKeyEventHandler((ev) => {
+    // Candidate navigation and confirmation belong to the IME, not the TUI.
+    // Keep 229 available to xterm's mobile textarea-diff fallback.
+    if ((ev.isComposing || term._core?._compositionHelper?.isComposing) && ev.keyCode !== 229) return false;
     if ((ev.key || "").toLowerCase() !== "c") return true;
     const mac = /Mac|iP(ad|hone|od)/.test(navigator.platform || "") || /Mac|iP(ad|hone|od)/.test(navigator.userAgent);
     const combo = !ev.altKey && ((ev.ctrlKey && !ev.metaKey) || (mac && ev.metaKey && !ev.ctrlKey)
@@ -2156,53 +2400,140 @@ function attachTerminal(tab, pane) {
     return false;
   });
 
-  p.term = term; p.fit = fit; p.ws = null; p._disposeWheel = disposeWheel; p._disposeIme = disposeIme; p._disposeTouchSel = disposeTouchSel; p._disposeTouchScroll = disposeTouchScroll; p._reconnectTimer = null;
+  p.term = term; p.fit = fit; p.ws = null; p._disposeWheel = disposeWheel; p._disposeIme = disposeIme; p._disposeMouseSel = disposeMouseSel; p._disposeTouchSel = disposeTouchSel; p._disposeTouchScroll = disposeTouchScroll; p._reconnectTimer = null;
   const self = p;              // bind this connection lifecycle to THIS pane
   const gen = p.gen;           // ...and to THIS mount of it
   const stale = () => self.gen !== gen;
+  function focusConnectedTerminal() {
+    if (passive || stale() || active !== self || self.term !== term || self.dead) return;
+    const focused = document.activeElement;
+    if (document.querySelector(".modal:not(.hidden):not(.is-closing),.ui-dialog-backdrop:not(.hidden):not(.is-closing),.login:not(.hidden):not(.is-closing)")) return;
+    if (focused && !focused.closest(".xterm") && (focused.matches("input,textarea,select,[role='tab']") || focused.isContentEditable)) return;
+    try { term.focus(); } catch (e) {}
+  }
 
-  let backoff = 1000;
+  let backoff = 1000, connection = 0, connectTimer = null, recoveredAt = -Infinity;
+  const clearConnectTimer = () => { clearTimeout(connectTimer); connectTimer = null; };
   function connect() {
     // Guard on the PANE being alive (and this mount still current), not on it
     // being focused — background panes must keep streaming while you work
     // in another split.
     if (stale() || self.dead || self.closedByUser) return;
+    const attempt = ++connection;
+    clearConnectTimer();
+    clearTimeout(self._reconnectTimer); self._reconnectTimer = null;
+    const previous = self.ws;
+    self.ws = null;
+    try { previous?.close(); } catch (e) {}
     setStatus("connecting", "连接中", self);
-    const ws = new WebSocket(wsUrl("/ws/term/" + tab.id));
-    ws.binaryType = "arraybuffer";
-    self.ws = ws;
-    ws.onopen = () => {
-      if (stale() || self.dead) { try { ws.close(); } catch (e) {} return; }
-      setStatus("connected", "运行中", self); backoff = 1000; refit(self);
-      if (active === self) { try { term.focus(); } catch (e) {} }
+    const pending = () => !stale() && !self.dead && !self.closedByUser && connection === attempt;
+    const open = () => {
+      if (!pending()) return;
+      const ws = new WebSocket(wsUrl("/ws/term/" + tab.id));
+      ws.binaryType = "arraybuffer";
+      self.ws = ws;
+      let failed = false;
+      const current = () => pending() && self.ws === ws;
+      const retry = () => {
+        if (!current() || failed) return;
+        failed = true;
+        clearConnectTimer();
+        setStatus("reconnecting", "重连中…", self);
+        self._reconnectTimer = setTimeout(() => {
+          self._reconnectTimer = null;
+          if (current()) connect();
+        }, backoff);
+        backoff = Math.min(backoff * 2, 15000);
+      };
+      ws.onopen = () => {
+        if (!current() || failed) { try { ws.close(); } catch (e) {} return; }
+        clearConnectTimer();
+        setStatus("connected", "运行中", self); backoff = 1000; refit(self); sendResize(self);
+        if (attempt === 1) focusConnectedTerminal();
+      };
+      ws.onmessage = (e) => {
+        if (!current() || failed) return;
+        const bytes = new Uint8Array(e.data);
+        if (self.echoProbeUntil) noteMouseEcho(self, bytes);
+        term.write(bytes);
+      };
+      ws.onclose = retry;
+      ws.onerror = () => { if (current()) { retry(); try { ws.close(); } catch (e) {} } };
+      connectTimer = setTimeout(() => {
+        if (current() && ws.readyState === 0) { retry(); try { ws.close(); } catch (e) {} }
+      }, 15000);
     };
-    ws.onmessage = (e) => {
-      if (stale() || self.dead) return;
-      const bytes = new Uint8Array(e.data);
-      if (self.echoProbeUntil) noteMouseEcho(self, bytes);
-      term.write(bytes);
-    };
-    ws.onclose = () => {
-      if (stale()) return;                       // superseded mount: stay quiet
-      if (self.dead || self.closedByUser) { setStatus("closed", "已停止", self); return; }
-      setStatus("reconnecting", "重连中…", self);
-      self._reconnectTimer = setTimeout(() => { if (!stale() && !self.dead && !self.closedByUser) connect(); }, backoff);
-      backoff = Math.min(backoff * 2, 15000);
-    };
-    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    if (attempt === 1) open();
+    else {
+      // CAN cancels a truncated escape sequence in the local parser; reset()
+      // alone leaves it pending. Drain old writes before the new tmux repaint.
+      term.write("\x18", () => {
+        if (!pending()) return;
+        term.reset();
+        self.mouseEcho = false; self.echoProbeUntil = 0;
+        open();
+      });
+    }
   }
+  self._resumeConnection = () => {
+    if (stale() || self.dead || self.closedByUser || Date.now() - recoveredAt < 1000) return;
+    recoveredAt = Date.now();
+    connect();
+  };
+  self._disposeConnection = () => { ++connection; clearConnectTimer(); };
   // NOTE: click/tap focusing is wired once in makePane() on the pane element —
   // re-adding it per mount stacked stale listeners holding disposed terminals.
   connect();
-  layoutPanes(); savePaneLayout(); updateSelectBtn();
+  layoutPanes(); if (!passive) savePaneLayout(); updateSelectBtn();
   // Defer focus one frame: on a synchronous tab-switch the xterm textarea isn't
   // laid out yet, so an immediate focus() silently no-ops (worked only after a
   // refresh, which mounts async). rAF + a timeout backstop makes it stick.
-  requestAnimationFrame(() => { if (active === p) try { term.focus(); } catch (e) {} });
-  setTimeout(() => { if (active === p && p.term) try { p.term.focus(); } catch (e) {} }, 80);
+  requestAnimationFrame(focusConnectedTerminal);
+  setTimeout(focusConnectedTerminal, 80);
   window.ccAppearance?.sync();
   window.ccNativeInput?.sync();
+  if (!passive) window.ccWorkspace?.revealActiveSession();
 }
+
+const TERMINAL_RESUME_AFTER = 60000;
+let terminalHiddenAt = document.hidden ? Date.now() : null;
+let terminalBlurredAt = null;
+let terminalClockAt = Date.now();
+let terminalNeedsReconnect = false;
+function resumeTerminalViews(force = false) {
+  terminalNeedsReconnect = terminalNeedsReconnect || force;
+  if (document.hidden) return;
+  const now = Date.now();
+  const suspended = terminalNeedsReconnect || now - terminalClockAt >= TERMINAL_RESUME_AFTER
+    || (terminalHiddenAt !== null && now - terminalHiddenAt >= TERMINAL_RESUME_AFTER);
+  terminalClockAt = now; terminalHiddenAt = null; terminalNeedsReconnect = false;
+  panes.forEach(p => {
+    if (!p.term || p.dead || p.closedByUser) return;
+    if (suspended || !p.ws || p.ws.readyState >= 2) p._resumeConnection?.();
+    else {
+      refit(p);
+      p.term.refresh(0, p.term.rows - 1);
+    }
+  });
+  if (suspended || panes.some(p => !p.term)) loadTabs();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) terminalHiddenAt = Date.now();
+  else resumeTerminalViews();
+});
+window.addEventListener("pageshow", ev => { if (ev.persisted) resumeTerminalViews(true); });
+window.addEventListener("online", () => resumeTerminalViews(true));
+window.addEventListener("blur", () => { terminalBlurredAt = Date.now(); });
+window.addEventListener("focus", () => {
+  const suspended = terminalBlurredAt !== null && Date.now() - terminalBlurredAt >= TERMINAL_RESUME_AFTER;
+  terminalBlurredAt = null;
+  resumeTerminalViews(suspended);
+});
+setInterval(() => {
+  const now = Date.now(), paused = now - terminalClockAt >= TERMINAL_RESUME_AFTER;
+  terminalClockAt = now;
+  if (paused && !document.hidden) resumeTerminalViews(true);
+}, 15000);
 
 function closeAllPanes() {
   panes.forEach((p) => teardownPane(p));
@@ -2434,7 +2765,160 @@ document.addEventListener("paste", (ev) => {
   if (imgs.length) { ev.preventDefault(); ev.stopPropagation(); addStagedImages(imgs); }
 }, true);
 // Esc closes the modal
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && imgModalOpen()) closeImgModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !e.isComposing && topModal() === document.getElementById("img-modal")) { e.preventDefault(); e.stopImmediatePropagation(); closeImgModal(); } });
+
+// ---- reference files -------------------------------------------------------
+const REFERENCE_MAX_FILES = 10, REFERENCE_MAX_BYTES = 100 * 1024 * 1024;
+let referenceFiles = [], referenceTarget = null, referenceBusy = false, referenceAbort = null, referenceEpoch = 0, referenceMessage = "";
+const referenceModal = document.getElementById("reference-modal");
+const referenceInput = document.getElementById("reference-input");
+const referencePick = document.getElementById("reference-pick");
+if (referenceModal && referenceInput && referencePick && document.getElementById("btn-reference")) {
+function referenceTargetValid(target) {
+  const pane = target?.pane;
+  return !!(pane && active === pane && panes.includes(pane) && pane.gen === target.gen && pane.term === target.term &&
+    pane.tab?.id === target.id && !pane.dead && !pane.closedByUser && restartRequests.get(target.id) !== "restarting");
+}
+function referencePaths() { return referenceFiles.filter(item => item.path).map(item => item.path); }
+function quoteReferencePath(path) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : "'" + path.replace(/'/g, "'\\''") + "'";
+}
+function renderReferences() {
+  const list = document.getElementById("reference-list");
+  list.replaceChildren();
+  referenceFiles.forEach((item, index) => {
+    const row = document.createElement("div"); row.className = "reference-row"; row.setAttribute("role", "listitem");
+    const icon = document.createElement("span"); icon.className = "reference-file-icon"; icon.innerHTML = uiIcon("File");
+    const details = document.createElement("span"); details.className = "reference-file-details";
+    const name = document.createElement("span"); name.className = "reference-file-name"; name.textContent = item.file.name || "未命名文件"; name.title = name.textContent;
+    const meta = document.createElement("span"); meta.className = "reference-file-meta";
+    meta.textContent = fmtBytes(item.file.size) + (item.path ? " · 已上传" : item.uploading ? " · 上传中" : item.error ? " · 上传失败" : "");
+    details.append(name, meta);
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "icon-btn"; remove.disabled = referenceBusy;
+    remove.title = "移除 " + name.textContent; remove.setAttribute("aria-label", remove.title); remove.innerHTML = uiIcon("X");
+    remove.onclick = () => { referenceFiles.splice(index, 1); referenceMessage = ""; renderReferences(); };
+    row.append(icon, details, remove); list.append(row);
+  });
+  document.getElementById("reference-state").textContent = referenceMessage || (referenceFiles.length + " / " + REFERENCE_MAX_FILES + " · 每个不超过 100 MiB");
+  document.getElementById("reference-send").disabled = referenceBusy || !referenceFiles.length;
+  document.getElementById("reference-copy").hidden = !referencePaths().length;
+  document.getElementById("reference-copy").disabled = referenceBusy;
+  referencePick.disabled = referenceBusy; referenceInput.disabled = referenceBusy;
+}
+function addReferences(files) {
+  if (referenceBusy) return 0;
+  let added = 0, rejected = false;
+  for (const file of Array.from(files || [])) {
+    if (!file || file.size > REFERENCE_MAX_BYTES || referenceFiles.length >= REFERENCE_MAX_FILES) { rejected = true; continue; }
+    referenceFiles.push({ file, path: "", uploading: false, error: false }); added++;
+  }
+  referenceMessage = rejected ? "部分文件超出数量或大小限制" : "";
+  renderReferences();
+  return added;
+}
+function openReferenceModal(pane = active) {
+  if (referenceBusy) return false;
+  if (!pane?.tab || !pane.term || pane.dead) { showToast("请先打开一个终端"); return false; }
+  referenceEpoch++;
+  referenceFiles = []; referenceMessage = "";
+  referenceTarget = { pane, gen: pane.gen, term: pane.term, id: pane.tab.id };
+  renderReferences(); openLayer(referenceModal, true);
+  referencePick.focus({ preventScroll: true });
+  return true;
+}
+function closeReferenceModal() {
+  if (referenceBusy) {
+    referenceEpoch++; referenceAbort?.abort(); referenceAbort = null; referenceBusy = false;
+    showToast("上传已取消，已完成的文件仍保存在缓存目录");
+  }
+  if (COARSE) referenceModal.__ccReturnFocus = null;
+  closeLayer(referenceModal, () => { referenceFiles = []; referenceTarget = null; renderReferences(); });
+}
+async function uploadReference(file, signal) {
+  const headers = { "Content-Type": "application/octet-stream", "X-File-Name": encodeURIComponent(file.name || "attachment") };
+  if (getToken()) headers.Authorization = "Bearer " + getToken();
+  const response = await fetch("/api/term/reference", { method: "POST", headers, body: file, credentials: "same-origin", signal });
+  if (response.status === 401) { setTokenPrompt(); throw new Error("需要有效 Token"); }
+  if (!response.ok) { let message = "上传失败"; try { message = (await response.json()).detail || message; } catch (_) {} throw new Error(message); }
+  const value = await response.json();
+  if (typeof value.path !== "string" || !value.path.startsWith("/") || /[\x00-\x1f\x7f]/.test(value.path)) throw new Error("上传结果无效");
+  return value.path;
+}
+async function sendReferences() {
+  if (referenceBusy || !referenceFiles.length) return;
+  const target = referenceTarget, pane = target?.pane, epoch = referenceEpoch;
+  if (!referenceTargetValid(target)) { referenceMessage = "原终端已变化，请复制已上传路径"; renderReferences(); return; }
+  if (!pane.ws || pane.ws.readyState !== 1) { referenceMessage = "终端未连接，文件仍保留在列表"; renderReferences(); return; }
+  const socket = pane.ws;
+  referenceBusy = true; referenceAbort = new AbortController(); referenceMessage = "上传中"; renderReferences();
+  try {
+    for (const item of referenceFiles) {
+      if (item.path) continue;
+      item.uploading = true; item.error = false; renderReferences();
+      try { item.path = await uploadReference(item.file, referenceAbort.signal); }
+      catch (error) {
+        if (epoch !== referenceEpoch) return;
+        item.error = true; referenceMessage = "上传失败 · " + (error.message || "请重试"); return;
+      } finally { item.uploading = false; }
+      if (epoch !== referenceEpoch) return;
+    }
+    if (!referenceTargetValid(target) || pane.ws !== socket || socket.readyState !== 1) {
+      referenceMessage = "原终端或连接已变化，文件已保存，可复制路径"; return;
+    }
+    try { pane.term.paste(" " + referencePaths().map(quoteReferencePath).join(" ") + " "); }
+    catch (_) { referenceMessage = "文件已保存，路径未插入，可复制路径"; return; }
+    showToast("已插入 " + referenceFiles.length + " 个文件路径，未发送消息");
+    referenceBusy = false; referenceAbort = null;
+    closeReferenceModal();
+  } finally {
+    if (epoch === referenceEpoch) { referenceBusy = false; referenceAbort = null; renderReferences(); }
+  }
+}
+document.getElementById("btn-reference").onclick = () => openReferenceModal();
+document.getElementById("reference-close").onclick = closeReferenceModal;
+document.getElementById("reference-send").onclick = sendReferences;
+document.getElementById("reference-copy").onclick = async () => {
+  const paths = referencePaths().map(quoteReferencePath).join(" ");
+  if (paths) showToast(await copyText(paths) ? "文件路径已复制" : "复制失败，请检查剪贴板权限");
+};
+referenceModal.addEventListener("mousedown", event => { if (event.target === referenceModal) closeReferenceModal(); });
+referencePick.onclick = () => referenceInput.click();
+referenceInput.onchange = event => { addReferences(event.target.files); event.target.value = ""; };
+["dragenter", "dragover"].forEach(type => referencePick.addEventListener(type, event => { event.preventDefault(); if (!referenceBusy) referencePick.classList.add("drag-over"); }));
+["dragleave", "dragend"].forEach(type => referencePick.addEventListener(type, () => referencePick.classList.remove("drag-over")));
+referencePick.addEventListener("drop", event => { event.preventDefault(); referencePick.classList.remove("drag-over"); addReferences(event.dataTransfer?.files); });
+document.addEventListener("paste", event => {
+  const data = event.clipboardData;
+  const files = Array.from(data?.files || []);
+  if (!files.length) for (const item of Array.from(data?.items || [])) {
+    if (item.kind === "file") { const file = item.getAsFile(); if (file) files.push(file); }
+  }
+  if (!files.length) return;
+  if (topModal() === referenceModal) { event.preventDefault(); event.stopPropagation(); addReferences(files); return; }
+  if (topModal()) return;
+  const pane = panes.find(item => item.term?.textarea === event.target);
+  if (!pane) return;
+  event.preventDefault(); event.stopPropagation();
+  focusPane(pane, false);
+  if (openReferenceModal(pane) && addReferences(files)) sendReferences();
+}, true);
+document.addEventListener("dragover", event => {
+  if (topModal() || !Array.from(event.dataTransfer?.types || []).includes("Files")) return;
+  if (panes.some(pane => pane.host.contains(event.target))) event.preventDefault();
+}, true);
+document.addEventListener("drop", event => {
+  if (topModal() || !event.dataTransfer?.files?.length) return;
+  const pane = panes.find(item => item.host.contains(event.target));
+  if (!pane) return;
+  event.preventDefault(); event.stopPropagation(); focusPane(pane, false);
+  if (openReferenceModal(pane) && addReferences(event.dataTransfer.files)) sendReferences();
+}, true);
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !event.isComposing && topModal() === referenceModal) {
+    event.preventDefault(); event.stopImmediatePropagation(); closeReferenceModal();
+  }
+});
+}
 
 // ---- presence (leak monitoring) --------------------------------------------
 function getClientId() {
@@ -2531,7 +3015,7 @@ async function loadIps() {
 document.getElementById("ips-open").onclick = openIpsModal;
 document.getElementById("ips-close").onclick = closeIpsModal;
 document.getElementById("ips-modal").addEventListener("click", (e) => { if (e.target.id === "ips-modal") closeIpsModal(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ipsModalOpen()) closeIpsModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !e.isComposing && topModal() === document.getElementById("ips-modal")) { e.preventDefault(); e.stopImmediatePropagation(); closeIpsModal(); } });
 async function heartbeat() {
   try { renderPresence(await api("/api/presence", { method: "POST", body: JSON.stringify({ clientId: getClientId() }) })); }
   catch (e) { /* silent — don't spam toasts on a poll */ }
@@ -2679,6 +3163,39 @@ async function copyText(text) {
     return ok;
   } catch (e) { return false; }
 }
+async function copyActiveSessionId() {
+  const pane = active, sid = pane?.tab?.id, button = document.getElementById("btn-copy-session-id");
+  if (copySessionIdBusy || !sid) return;
+  const focused = document.activeElement;
+  copySessionIdBusy = true; setButtonBusy(button, true);
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 12000);
+  const identity = api("/api/sessions/" + encodeURIComponent(sid) + "/identity", { cache: "no-store", signal: controller.signal }, 0).then(data => {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const valid = data?.kind === "window" ? data.value === "cc_" + sid : data?.kind === "native" && (
+      data.agent === "opencode" ? /^ses_[a-zA-Z0-9]{8,64}$/.test(data.value) : ["codex", "claude"].includes(data.agent) && uuid.test(data.value));
+    if (data?.id !== sid || !valid || !["running", "stopped", "pending"].includes(data.state)) throw new Error("会话 ID 无效，未复制任何内容");
+    return data;
+  });
+  let clipboardWrite = null;
+  // Start the clipboard operation during the click, before the metadata request
+  // settles. WebKit otherwise loses user activation across the network await.
+  if (window.isSecureContext && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+    const text = identity.then(data => new Blob([data.value], { type: "text/plain" }));
+    text.catch(() => {});
+    try { clipboardWrite = navigator.clipboard.write([new ClipboardItem({ "text/plain": text })]).then(() => true, () => false); }
+    catch (error) { /* Use the existing clipboard fallback below. */ }
+  }
+  try {
+    const data = await identity;
+    const ok = (clipboardWrite && await clipboardWrite) || await copyText(data.value);
+    showToast(ok ? data.kind === "window" ? "已复制网页窗口 ID（普通终端没有原生会话 ID）" : data.state === "pending" ? "已复制待恢复会话 ID" : "已复制会话 ID" : "复制失败，浏览器拒绝了剪贴板访问");
+    if (!COARSE && active === pane && pane.tab?.id === sid && panes.includes(pane) && (document.activeElement === document.body || document.activeElement === button || document.activeElement === focused)) pane.term?.focus();
+  } catch (error) {
+    showToast(error.name === "AbortError" ? "核对会话 ID 超时，未复制；请稍后重试" : "未复制 · " + (error.message || "无法核对会话 ID"));
+  } finally { clearTimeout(timer); copySessionIdBusy = false; setButtonBusy(button, false); updateCopySessionIdControl(); }
+}
+document.getElementById("btn-copy-session-id").addEventListener("mousedown", event => event.preventDefault());
+document.getElementById("btn-copy-session-id").onclick = copyActiveSessionId;
 // A touch device pops the on-screen keyboard the instant something takes
 // focus, so restoring a terminal on page load threw the keyboard in your face
 // before you asked for anything. On touch we focus only on a real tap (the pane
@@ -2721,23 +3238,23 @@ function toggleKeyboard() {
 
 // ---- selection mode --------------------------------------------------------
 // When an app turns on mouse reporting (claude, codex), xterm disables its
-// selection service outright and hands every drag to the app — so you cannot
-// select anything, which is why "选中了却复制不了" is really "从来没选中过".
-// xterm's own escape hatch is shouldForceSelection(); we widen it to "always
-// true while 选择模式 is on". That reuses xterm's designed path, which also
-// stopPropagation()s the event so the app never sees the drag.
+// selection service and forwards drags. Use xterm's forced-selection path for
+// explicit selection mode and desktop click/drag arbitration below.
 let selectMode = localStorage.getItem("cc_select_mode") === "1";
-function isMouseWheelReport(data) {
+function mouseReportButton(data) {
   let button;
   if (data.startsWith("\x1b[M") && data.length === 6) {
     button = data.charCodeAt(3) - 32;
   } else {
     const match = /^\x1b\[(<)?(\d+);\d+;\d+[Mm]$/.exec(data);
-    if (!match) return false;
+    if (!match) return -1;
     button = Number(match[2]) - (match[1] ? 0 : 32);
   }
   // Remove Shift/Alt/Ctrl bits, retaining wheel vs pointer-motion bits.
-  button &= ~28;
+  return button & ~28;
+}
+function isMouseWheelReport(data) {
+  const button = mouseReportButton(data);
   return button >= 64 && button <= 67;
 }
 function installSelectMode(term) {
@@ -2747,7 +3264,7 @@ function installSelectMode(term) {
     const ss = core && core._selectionService;
     if (ss && !ss.__ccPatched) {
       const orig = ss.shouldForceSelection.bind(ss);
-      ss.shouldForceSelection = (ev) => selectMode || orig(ev);
+      ss.shouldForceSelection = (ev) => selectMode || !!term.__ccMouseSelection || orig(ev);
       ss.__ccPatched = true;
       ok = true;
     }
@@ -2769,7 +3286,10 @@ function installSelectMode(term) {
       const origTrigger = cs.triggerDataEvent.bind(cs);
       const MOUSE_SEQ = /^\x1b\[(?:M[\s\S]{3}|<?\d+;\d+;\d+[Mm])$/;
       cs.triggerDataEvent = (data, wasUserInput) => {
-        if (selectMode && typeof data === "string" && MOUSE_SEQ.test(data) && !isMouseWheelReport(data)) return;
+        if (typeof data === "string" && MOUSE_SEQ.test(data) && !isMouseWheelReport(data)) {
+          // Hover reports must not erase a real Shift/Option-drag selection.
+          if (selectMode || term.__ccMouseSelection || (term.hasSelection() && (mouseReportButton(data) & 32))) return;
+        }
         return origTrigger(data, wasUserInput);
       };
       cs.__ccPatched = true;
@@ -2790,11 +3310,76 @@ function installSelectMode(term) {
   } catch (e) { return false; }
   return ok;
 }
+
+function attachMouseSelection(term, host, pane) {
+  const core = term._core, selection = core?._selectionService, mouse = core?.coreMouseService;
+  if (!selection || !mouse || !core._mouseService?.getMouseReportCoords) return () => {};
+  let gesture = null, pointerType = "";
+  const reset = () => { gesture = null; term.__ccMouseSelection = null; };
+  const cancel = () => {
+    if (gesture) selection._removeMouseDownListeners?.();
+    reset();
+  };
+  const cancelClick = () => { if (gesture) gesture.cancelled = true; };
+  const onPointer = ev => { pointerType = ev.pointerType; };
+  const onDown = ev => {
+    if (ev.button !== 0 || !ev.target.closest?.(".xterm-screen,.xterm-helper-textarea")) return;
+    if (pointerType === "touch" || ev.sourceCapabilities?.firesTouchEvents) return;
+    cancel();
+    // Forced selection stops propagation before the pane's normal focus handler.
+    focusPane(pane);
+    if (selectMode || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey || !mouse.areMouseEventsActive) return;
+    const position = core._mouseService.getMouseReportCoords(ev, core.screenElement);
+    if (!position) return;
+    gesture = { x: ev.clientX, y: ev.clientY, position, detail: ev.detail, socket: pane.ws,
+      protocol: mouse.activeProtocol, encoding: mouse.activeEncoding, dragged: false, cancelled: false };
+    term.__ccMouseSelection = gesture;
+  };
+  const onMove = ev => {
+    if (!gesture) return;
+    if (!(ev.buttons & 1)) { cancel(); return; }
+    if (Math.hypot(ev.clientX - gesture.x, ev.clientY - gesture.y) >= 4) gesture.dragged = true;
+  };
+  const onUp = ev => {
+    if (!gesture || ev.button !== 0) return;
+    const previous = gesture;
+    reset();
+    if (previous.dragged || previous.cancelled || previous.detail !== 1 || term.hasSelection() || selectMode ||
+        ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey || !host.contains(ev.target) ||
+        Math.hypot(ev.clientX - previous.x, ev.clientY - previous.y) >= 4 ||
+        active !== pane || pane.term !== term || pane.ws !== previous.socket || pane.dead || !host.isConnected ||
+        mouse.activeProtocol !== previous.protocol || mouse.activeEncoding !== previous.encoding) return;
+    // Defer only the click decision, not a guessed escape sequence. xterm owns
+    // coordinates, protocol restrictions and encoding for both press and release.
+    for (const action of [1, 0]) mouse.triggerMouseEvent({ ...previous.position, button: 0, action,
+      ctrl: false, alt: false, shift: false });
+  };
+  const subscriptions = [term.onWriteParsed(cancelClick), term.onResize(cancelClick),
+    term.onScroll(cancelClick), mouse.onProtocolChange(cancelClick)];
+  host.addEventListener("pointerdown", onPointer, true);
+  host.addEventListener("mousedown", onDown, true);
+  host.addEventListener("wheel", cancelClick, { capture: true, passive: true });
+  host.addEventListener("keydown", cancel, true);
+  document.addEventListener("mousemove", onMove, true);
+  document.addEventListener("mouseup", onUp, true);
+  window.addEventListener("blur", cancel);
+  return () => {
+    cancel(); subscriptions.forEach(subscription => subscription.dispose());
+    host.removeEventListener("pointerdown", onPointer, true);
+    host.removeEventListener("mousedown", onDown, true);
+    host.removeEventListener("wheel", cancelClick, true);
+    host.removeEventListener("keydown", cancel, true);
+    document.removeEventListener("mousemove", onMove, true);
+    document.removeEventListener("mouseup", onUp, true);
+    window.removeEventListener("blur", cancel);
+  };
+}
+
 function updateSelectBtn() {
   const b = document.getElementById("btn-select");
   if (!b) return;
   b.classList.toggle("on", selectMode);
-  b.title = selectMode ? (COARSE ? "选择模式:开(长按后拖动选字,滑动仍可滚动)" : "选择模式:开(拖拽选中文字,滚轮仍可滚动)") : "选择模式:关(拖拽交给程序,如 claude 的点击)";
+  b.title = selectMode ? (COARSE ? "选择模式:开(长按后拖动选字,滑动仍可滚动)" : "选择模式:开(拖拽选中文字,滚轮仍可滚动)") : "选择模式:关(鼠标拖拽选字,单击交给程序)";
   b.setAttribute("aria-pressed", String(selectMode));
   document.querySelectorAll(".pane").forEach((el) => el.classList.toggle("selecting", selectMode));
 }
@@ -2802,7 +3387,7 @@ function toggleSelectMode() {
   selectMode = !selectMode;
   localStorage.setItem("cc_select_mode", selectMode ? "1" : "0");
   updateSelectBtn();
-  showToast(selectMode ? "选择模式已开:拖拽选字,滚轮仍可滚动" : "选择模式已关:鼠标恢复交给程序");
+  showToast(selectMode ? "选择模式已开:拖拽选字,滚轮仍可滚动" : "选择模式已关:鼠标拖拽选字,单击交给程序");
   if (active && active.term) { try { active.term.focus(); } catch (e) {} }
 }
 
@@ -3333,7 +3918,7 @@ document.getElementById("gpu-reload").onclick = () => {
   Object.keys(duState).forEach((a) => { if (duState[a].path) openDu(a, duState[a].path, true); });
 };
 document.getElementById("gpu-modal").addEventListener("click", (e) => { if (e.target.id === "gpu-modal") closeGpuModal(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && gpuModalOpen()) closeGpuModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !e.isComposing && topModal() === document.getElementById("gpu-modal")) { e.preventDefault(); e.stopImmediatePropagation(); closeGpuModal(); } });
 document.getElementById("gpu-add").addEventListener("submit", async (e) => {
   e.preventDefault();
   const addr = document.getElementById("gpu-addr").value.trim();
@@ -3380,6 +3965,7 @@ function fmtTime(ts) {
 }
 
 let filesPath = "";
+let filesBasePath = "";
 let filesEntries = [];
 let filesView = localStorage.getItem("cc_files_view") || "list";
 let fvList = [];      // previewable files of the current dir, in display order
@@ -3387,24 +3973,34 @@ let fvIndex = -1;
 let filesLoadSeq = 0;
 
 function filesModalOpen() { return layerOpen(document.getElementById("files-modal")); }
-function openFilesModal() {
+function openFilesModal(path) {
   openLayer(document.getElementById("files-modal"), true);
-  loadFiles(filesPath || localStorage.getItem("cc_files_path") || state.defaultDir || "");
+  loadFiles((typeof path === "string" && path) || filesPath || localStorage.getItem("cc_files_path") || state.defaultDir || "");
 }
 function closeFilesModal() {
+  ++filesLoadSeq;
+  window.ccFilePreview?.cancelPath();
   closePreview();
   closeLayer(document.getElementById("files-modal"));
 }
 async function loadFiles(path) {
+  window.ccFilePreview?.cancelPath();
+  if (previewOpen()) closePreview();
+  filesBasePath = path || "";
+  const address = document.getElementById("files-path-input");
+  if (address && document.activeElement !== address) address.value = filesBasePath;
   const seq = ++filesLoadSeq;
   const box = document.getElementById("files-list");
   box.setAttribute("aria-busy", "true");
   box.innerHTML = '<div class="gpu-loading">读取中…</div>';
   try {
     const d = await api("/api/fs?path=" + encodeURIComponent(path || ""));
-    if (seq !== filesLoadSeq) return;
+    if (seq !== filesLoadSeq || !filesModalOpen()) return;
     filesPath = d.path || "";
+    filesBasePath = filesPath;
     filesEntries = d.entries || [];
+    const address = document.getElementById("files-path-input");
+    if (address && document.activeElement !== address) address.value = filesPath;
     if (filesPath) localStorage.setItem("cc_files_path", filesPath);
     document.getElementById("files-search").value = "";
     renderFiles();
@@ -3425,7 +4021,7 @@ function filesCrumb() {
   // The root link is already "/", so it must butt straight against the first
   // segment — joining every link with a separator produced "//tmp/...".
   el.innerHTML = links[0] + links.slice(1).join('<span class="du-sep">/</span>');
-  el.querySelectorAll("[data-go]").forEach((a) => { a.onclick = () => loadFiles(a.dataset.go); });
+  el.querySelectorAll("[data-go]").forEach((a) => { a.onclick = () => loadFiles(a.dataset.go); keyboardClickable(a, a.onclick, a.dataset.go); });
 }
 function renderFiles() {
   filesCrumb();
@@ -3436,10 +4032,11 @@ function renderFiles() {
   document.getElementById("files-view").textContent = filesView === "grid" ? "▤ 列表" : "▦ 网格";
   setCommandIcon("files-view", filesView === "grid" ? "List" : "LayoutGrid", filesView === "grid" ? "列表" : "网格");
 
-  fvList = rows.filter((e) => e.type === "file");
+  const previewFiles = rows.filter((e) => e.type === "file");
+  if (!previewOpen()) fvList = previewFiles;
   const note = document.getElementById("files-note");
   const dirs = rows.filter((e) => e.type === "dir").length;
-  note.textContent = filesPath ? (dirs + " 个文件夹 · " + fvList.length + " 个文件") : "";
+  note.textContent = filesPath ? (dirs + " 个文件夹 · " + previewFiles.length + " 个文件") : "";
 
   if (!rows.length) { box.innerHTML = '<div class="pp-note">这里没有内容</div>'; return; }
   box.innerHTML = rows.map((e) => {
@@ -3464,6 +4061,7 @@ function renderFiles() {
   box.querySelectorAll("[data-path]").forEach((el) => {
     const open = () => {
       if (el.dataset.type === "dir") return loadFiles(el.dataset.path);
+      fvList = previewFiles;
       openPreview(fvList.findIndex((f) => f.path === el.dataset.path));
     };
     el.onclick = open;
@@ -3474,14 +4072,17 @@ function renderFiles() {
 // ---- previewer -------------------------------------------------------------
 function previewOpen() { return layerOpen(document.getElementById("fv")); }
 function closePreview() {
+  window.ccFilePreview?.close();
   const body = document.getElementById("fv-body");
   closeLayer(document.getElementById("fv"), () => { body.innerHTML = ""; });
   fvIndex = -1;
+  if (filesModalOpen()) renderFiles();
 }
 async function openPreview(i) {
   if (i < 0 || i >= fvList.length) return;
   fvIndex = i;
   const f = fvList[i];
+  if (window.ccFilePreview) return window.ccFilePreview.open(f, i, fvList.length);
   const k = kindOf(f.name);
   openLayer(document.getElementById("fv"), true);
   document.getElementById("fv-name").textContent = f.name;
@@ -3542,9 +4143,10 @@ document.getElementById("files-modal").addEventListener("click", (e) => {
   if (e.target.id === "files-modal") closeFilesModal();
 });
 document.addEventListener("keydown", (e) => {
-  if (!filesModalOpen()) return;
-  if (e.key === "Escape") { previewOpen() ? closePreview() : closeFilesModal(); return; }
+  if (e.isComposing || topModal() !== document.getElementById("files-modal")) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); previewOpen() ? closePreview() : closeFilesModal(); return; }
   if (!previewOpen()) return;
+  if (e.target.closest('input,textarea,select,[contenteditable="true"],.fv-text,.fv-table-wrap')) return;
   if (e.key === "ArrowLeft") previewNav(-1);
   if (e.key === "ArrowRight") previewNav(1);
 });

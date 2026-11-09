@@ -69,7 +69,8 @@ CC_WEB_DEFAULT_DIR=/home/your-user/projects
 | `CC_WEB_CLAUDE` | Path to the Claude Code executable. |
 | `CC_WEB_CODEX` | Path to the Codex executable. |
 | `CC_WEB_OPENCODE` | Path to the OpenCode executable. |
-| `CC_WEB_CODEX_MODEL_CATALOG` | Codex model catalog JSON; an empty string disables the override. |
+| `CC_WEB_CODEX_MODEL_CATALOG` | Defaults to `auto`: refresh from the selected Codex executable on launch. An explicit JSON path overrides this; an empty string disables the override. |
+| `CC_WEB_UPLOAD_DIR` | Reference-file cache inside the file allowlist; defaults to `.cc-web-uploads` under `CC_WEB_DEFAULT_DIR`. Keep it outside Git. |
 | `CC_WEB_CODEX_STATUS_LINE` | Comma-separated items for the native Codex status line. |
 | `CC_WEB_CODEX_SCROLLBACK` | `1` (default) uses inline history for new Codex launches; `0` opts into the native fullscreen UI. |
 | `CC_WEB_DISK_ROOTS` | Comma-separated roots that the resource panel may scan with `du`. |

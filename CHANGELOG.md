@@ -4,6 +4,32 @@ This project follows [Semantic Versioning](https://semver.org/) for tagged relea
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
+### Added
+
+- A compact workbench with workspace/session navigation, screen tabs, focused-terminal tools and a collapsible inspector. Existing terminal font preferences are preserved.
+- Named, reorderable screens with up to four panes each, cross-screen moves, open-location indicators and Token-associated layout profiles. Desktop and mobile layouts recover separately.
+- Exact-session lookup, one-click session ID copying, session renaming/moving, explicit permission changes and unread completion indicators that clear on focus.
+- Reference-file uploads and path previews for directories, Markdown, JSON, CSV, text, images, media, PDF and sandboxed HTML.
+- A compact toolbar quota battery with a relative reset countdown, replacing per-pane progress bars.
+
+### Fixed
+
+- Layout restore and cross-browser conflicts now retain a local recovery journal instead of silently overwriting the current layout; a terminal cannot occupy multiple screens in one layout.
+- IME composition, input event deduplication and buffered transport preserve Chinese input across redraws and reconnect boundaries; uncertain input is not silently replayed into another conversation.
+- Copy routing retains terminal selections and never turns a failed Ctrl+C copy into a process interrupt.
+- A delayed terminal connection no longer steals keyboard focus from a selected screen tab.
+- CLI foreground detection, exact-session recovery checks and automatic Codex catalog refresh follow the selected shared installation without stopping unrelated tasks.
+
+### Security and documentation
+
+- Preserved signed expiring session cookies, owner-only runtime state and real-path file allowlists while integrating the new UI. HTML is previewed in a sandbox; active documents cannot use the raw inline-download route.
+- Replaced every README preview: 22 English and 22 Chinese screenshots, all generated from the new frontend with synthetic data. Added a one-sentence feature summary and updated operation/deployment guides.
+- Added file-preview dependency license notices and regression coverage for uploads, previews, layout persistence, input handling and the compact workbench.
+
+See the [English / Chinese release notes](docs/releases/v0.3.0.md).
+
 ## [0.2.0] - 2026-10-16
 
 ### Added

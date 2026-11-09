@@ -123,6 +123,43 @@ test('unavailable native session keeps disabled recovery controls visible', asyn
   await expect(row.getByRole('button', { name: '重启并恢复', exact: true })).toBeDisabled();
 });
 
+test('unrecognized Claude process is not mislabeled as stopped and never enables unsafe recovery', async ({ page }) => {
+  const requests = [];
+  page.on('request', request => { if (request.method() === 'POST') requests.push(new URL(request.url()).pathname); });
+  await openVersionWorkspace(page, 'dark', { ...versionFixture,
+    current: { agent: null, version: null, state: 'unknown', reason: '无法识别此窗口的运行程序' },
+    resume: { ready: false, agent: 'claude', reason: '当前前台是其他程序，不能发送重启命令' },
+    agents: versionFixture.agents.map(row => ({ ...row, running: null })) });
+  const row = page.locator('.version-row[data-agent="claude"]');
+  await expect(row.locator('dd').first()).toHaveText('未识别');
+  await expect(row.locator('.version-note')).toContainText('当前前台是其他程序');
+  await expect(row.getByRole('button', { name: '重启并恢复', exact: true })).toBeDisabled();
+  await expect(page.locator('#versions-status')).toContainText('上次检测时间');
+  expect(requests.filter(path => path.startsWith('/api/agents') || path.startsWith('/api/sessions/'))).toEqual([]);
+});
+
+test('version check refreshes Claude metadata independently and never restarts the running session', async ({ page }) => {
+  const data = { ...versionFixture, current: { agent: 'claude', version: '2.1.303', state: 'running' },
+    resume: { ...restartPreview, agent: 'claude' },
+    agents: versionFixture.agents.map(row => ({ ...row, installed: '2.1.304', latest: null, status: 'unknown',
+      running: row.agent === 'claude' ? '2.1.303' : null, canUpdate: false, error: '请检测官方版本' })) };
+  const errors = await openVersionWorkspace(page, 'dark', data);
+  let checks = 0;
+  await page.route('**/api/agents/versions/check', route => {
+    checks++;
+    return route.fulfill({ json: { ...data, agents: data.agents.map(row => row.agent === 'claude' ?
+      { ...row, latest: '2.1.307', status: 'outdated', runningStatus: 'outdated', error: '', canUpdate: true } : row) } });
+  });
+  await page.locator('#versions-check').click();
+  const row = page.locator('.version-row[data-agent="claude"]');
+  await expect(row.locator('dd')).toHaveText(['2.1.303', '2.1.304', '2.1.307']);
+  await expect(row.getByRole('button', { name: '仅更新', exact: true })).toBeEnabled();
+  await assertRestartReferences(page);
+  expect(checks).toBe(1);
+  expect(await page.evaluate(() => sent.filter(message => message.type === 'input'))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('install-only update is deduplicated and never sends restart or terminal input', async ({ page }) => {
   await openVersionWorkspace(page);
   const posts = [];
@@ -482,7 +519,7 @@ async function openWorkspace(page, theme = 'dark', noIcons = false) {
         gpus: [{ index: 0, name: 'NVIDIA Demo GPU', state: 'busy', util: 36, mem_used: 8192, mem_total: 24576, mem_pct: 33, temp: 52, power: 100, power_limit: 250, procs: [] }],
       }] },
     };
-    if (url.pathname.startsWith('/api/')) return route.fulfill({ json: api[url.pathname] || {} });
+    if (url.pathname.startsWith('/api/')) return route.fulfill({ json: api[url.pathname] || (url.pathname.endsWith('/restart') ? restartPreview : {}) });
     if (noIcons && url.pathname.endsWith('lucide.min.js')) return route.fulfill({ status: 404 });
     const file = path.resolve(frontend, '.' + (url.pathname === '/' ? '/index.html' : url.pathname));
     if (!file.startsWith(frontend + path.sep) || !fs.existsSync(file)) return route.fulfill({ status: 404 });
@@ -497,6 +534,41 @@ async function openWorkspace(page, theme = 'dark', noIcons = false) {
     '\x1b[32mPASS\x1b[0m  terminal scrolling\r\n\x1b[32mPASS\x1b[0m  split layout\r\n' +
     '\x1b[36m~/workspace/demo\x1b[0m $ npm test\r\n\r\nAll checks passed.\r\n', resolve)));
   return errors;
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [320, 390, 1440]) {
+    test(`legacy quota battery fits ${theme} ${width}px and remains readable without icons`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const errors = await openWorkspace(page, theme, width === 390);
+      await page.evaluate(() => attachTerminal(state.tabs.find(t => t.type === 'codex'), active));
+      const quota = page.locator('.quota-battery:visible');
+      await expect(quota.locator('.quota-battery-value')).toHaveText('55%');
+      await expect(quota.locator('.quota-battery-reset')).toHaveText(/\d+d\d+h后重置/);
+      await expect(page.locator('.codex-usage')).toHaveCount(0);
+      await assertFits(page);
+      const fits = await quota.evaluate(el => {
+        const r = el.getBoundingClientRect();
+        return r.left >= 0 && r.right <= innerWidth && [...el.querySelectorAll('span')].every(child => {
+          const c = child.getBoundingClientRect();
+          return c.width === 0 || c.left >= r.left && c.right <= r.right && c.top >= r.top && c.bottom <= r.bottom;
+        });
+      });
+      expect(fits).toBe(true);
+      if (width < 821) {
+        const title = await page.locator('#recent-toggle').boundingBox();
+        expect(title.width).toBeGreaterThan(40);
+        await expect(page.locator('#topbar-tools')).toBeInViewport();
+        await expect(page.locator('#btn-files-m')).toBeInViewport();
+        await expect(page.locator('#btn-gpu-m')).toBeInViewport();
+        await expect(page.locator('#btn-versions-m')).toBeInViewport();
+      }
+      await quota.click();
+      await expect(page.locator('#toast')).toContainText('后重置');
+      if (width === 320) await page.screenshot({ path: `/tmp/webcc-v99-quota-legacy-${theme}-${width}.png` });
+      expect(errors).toEqual([]);
+    });
+  }
 }
 
 for (const theme of ['dark', 'light']) {
@@ -557,12 +629,15 @@ test('recent picker preserves stopped entries, deduplicates and drops deleted se
     saveActiveId('stopped');
     renderTabs();
   });
+  const sessionTabs = await page.evaluate(() => state.tabs);
+  await page.route('**/api/sessions', route => route.fulfill({ json: { sessions: sessionTabs, groups: {}, manualGroups: [] } }));
+  await page.route('**/api/sessions/stopped/restart', route => route.fulfill({ json: { ...restartPreview, running: false, stopped: true } }));
   await page.locator('#recent-toggle').click();
   await expect(page.locator('.recent-row[data-session-id="gone"]')).toHaveCount(0);
   await expect(page.locator('.recent-row[data-session-id="demo02"]')).toHaveCount(1);
   await expect(page.locator('.recent-row[data-session-id="stopped"]')).toContainText('已停止');
   let starts = 0;
-  await page.route('**/api/sessions/stopped/start', route => { starts++; return route.fulfill({ json: {
+  await page.route('**/api/sessions/stopped/start', route => { starts++; sessionTabs.find(tab => tab.id === 'stopped').alive = true; return route.fulfill({ json: {
     id: 'stopped', name: 'Stopped task', cwd: '/workspace/demo', type: 'codex', alive: true,
   } }); });
   await page.locator('.recent-row[data-session-id="stopped"]').click();
@@ -618,6 +693,9 @@ test('failed recent-session restart stays selectable and repeated taps do not do
     state.tabs.push({ id: 'stopped', name: 'Stopped task', cwd: '/workspace/demo', type: 'codex', alive: false });
     renderTabs();
   });
+  const sessionTabs = await page.evaluate(() => state.tabs);
+  await page.route('**/api/sessions', route => route.fulfill({ json: { sessions: sessionTabs, groups: {}, manualGroups: [] } }));
+  await page.route('**/api/sessions/stopped/restart', route => route.fulfill({ json: { ...restartPreview, running: false, stopped: true } }));
   let calls = 0;
   await page.route('**/api/sessions/stopped/start', async route => {
     calls++;
@@ -1184,7 +1262,9 @@ test('four panes, active quota, keyboard keys and theme switching stay functiona
       '\x1b[?1049h\x1b[2J\x1b[H' + pane.tab.name + '\r\n\r\n' +
       ['npm test\r\n\x1b[32mAll 30 tests passed.\x1b[0m', 'OpenAI Codex\r\n\r\n\x1b[36mReady\x1b[0m\r\nContext 75% left', 'Claude Code\r\n\r\n\x1b[32mUpdated 3 files\x1b[0m', 'OpenCode\r\n\r\n\x1b[33mReviewing changes...\x1b[0m'][i], resolve));
   });
-  await expect(page.locator('.codex-usage:not(.hidden)')).toHaveCount(1);
+  await expect(page.locator('.quota-battery:visible')).toHaveCount(1);
+  await expect(page.locator('#codex-quota .quota-battery-value')).toHaveText('55%');
+  await expect(page.locator('.codex-usage')).toHaveCount(0);
   await openTools(page);
   await page.locator('#btn-aux').click();
   await expect(page.locator('#auxbar')).toBeHidden();

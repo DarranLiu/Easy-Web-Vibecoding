@@ -37,12 +37,14 @@ class FluentUiContractTests(unittest.TestCase):
         self.assertEqual(MANIFEST["display"], "standalone")
         self.assertEqual(MANIFEST["name"], "CC Terminal")
 
-    def test_codex_quota_shelf_is_compact_and_active_pane_only(self):
-        self.assertIn('class="codex-usage hidden"', APP_JS)
+    def test_codex_quota_battery_is_toolbar_only_and_active_pane_only(self):
+        self.assertIn('id="codex-quota"', INDEX_HTML)
+        self.assertIn('id="codex-quota-m"', INDEX_HTML)
         self.assertIn("function refreshCodexUsage", APP_JS)
-        self.assertIn(".codex-usage-row", STYLE_CSS)
-        self.assertIn("@container (max-width: 220px)", STYLE_CSS)
-        self.assertIn("p === active", APP_JS)
+        self.assertIn(".quota-battery-icon", STYLE_CSS)
+        self.assertNotIn('class="codex-usage hidden"', APP_JS)
+        self.assertNotIn('role="progressbar"', APP_JS)
+        self.assertIn('active?.tab?.type === "codex"', APP_JS)
         self.assertIn("10 * 60 * 1000", APP_JS)
         self.assertIn("nextRefreshAt", APP_JS)
         self.assertIn("scheduleCodexUsageRefresh", APP_JS)
@@ -52,6 +54,16 @@ class FluentUiContractTests(unittest.TestCase):
         self.assertNotIn("/api/codex/usage?", APP_JS)
         self.assertNotIn("codex-usage-name", APP_JS)
         self.assertNotIn("codex-usage-window", APP_JS)
+
+    def test_quota_countdown_uses_days_and_hours_without_account_requests(self):
+        self.assertIn('"h后重置"', APP_JS)
+        self.assertIn("Math.ceil(remaining / 3600000)", APP_JS)
+        self.assertIn("setTimeout(renderAllCodexUsage, 60000)", APP_JS)
+        render = APP_JS.split("function renderAllCodexUsage() {", 1)[1].split("function scheduleCodexUsageRefresh()", 1)[0]
+        self.assertNotIn("refreshCodexUsage(", render)
+        self.assertNotIn("api(", render)
+        self.assertNotIn("refit(", render)
+        self.assertIn('document.visibilityState === "visible"', render)
 
 
 if __name__ == "__main__":

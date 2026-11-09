@@ -34,6 +34,8 @@ CLAUDE_BIN = os.environ.get("CC_WEB_CLAUDE") or shutil.which("claude") or "claud
 
 # --- Default directory the file picker opens at -----------------------------
 DEFAULT_DIR = os.environ.get("CC_WEB_DEFAULT_DIR", str(Path.home()))
+REFERENCE_UPLOAD_DIR = Path(os.environ.get("CC_WEB_UPLOAD_DIR") or
+                            str(Path(DEFAULT_DIR) / ".cc-web-uploads")).expanduser().absolute()
 
 # --- Agent binaries + terminal-type availability ----------------------------
 CODEX_BIN = os.environ.get("CC_WEB_CODEX") or shutil.which("codex") or "codex"
@@ -49,18 +51,8 @@ AGENT_RUNTIME_DIR = Path(os.environ.get(
 AGENT_UPDATE_DIR = Path(os.environ.get(
     "CC_WEB_AGENT_UPDATE_DIR", str(Path.home() / ".cache" / "cc-web-terminal" / "updates")
 )).expanduser()
-_CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
-_DEFAULT_CODEX_MODEL_CATALOG = _CODEX_HOME / "catalogs" / "models-current.json"
-_CODEX_MODEL_CATALOG_OVERRIDE = os.environ.get("CC_WEB_CODEX_MODEL_CATALOG")
-CODEX_MODEL_CATALOG = (
-    _CODEX_MODEL_CATALOG_OVERRIDE.strip()
-    if _CODEX_MODEL_CATALOG_OVERRIDE is not None
-    else (
-        str(_DEFAULT_CODEX_MODEL_CATALOG)
-        if _DEFAULT_CODEX_MODEL_CATALOG.is_file()
-        else ""
-    )
-)
+# Follow the actual executable selected for each launch, not a stale shell cache.
+CODEX_MODEL_CATALOG = os.environ.get("CC_WEB_CODEX_MODEL_CATALOG", "auto").strip()
 _DEFAULT_CODEX_STATUS_LINE = [
     "model-with-reasoning",
     "run-state",
