@@ -36,6 +36,7 @@ Easy Web Vibecoding 的界面叫 **CC Terminal**。它不是新的模型服务�
 git clone https://github.com/DarranLiu/Easy-Web-Vibecoding.git
 cd Easy-Web-Vibecoding
 
+mkdir -p "$HOME/projects"
 export CC_WEB_ROOTS="$HOME/projects"
 export CC_WEB_DEFAULT_DIR="$HOME/projects"
 ./run.sh
@@ -48,6 +49,14 @@ http://127.0.0.1:8000
 ```
 
 服务端需要 Python 3.10+ 和 `tmux`。Claude Code、Codex、OpenCode 需要先在服务器上自行安装并登录；本项目不会保存它们的 API Key。
+
+如果部署在远程服务器，先保持服务器上的 `./run.sh` 运行，再在**你自己的电脑**打开终端，建立 SSH 本地端口转发（将 `your-user@your-server` 替换为你的 SSH 登录地址）：
+
+```bash
+ssh -N -L 18000:127.0.0.1:8000 your-user@your-server
+```
+
+保持这条 SSH 连接，在本机浏览器打开 `http://127.0.0.1:18000`，输入服务器生成的 Token。如果服务和浏览器在同一台电脑，直接打开 `http://127.0.0.1:8000`。这样即可先试用，不需要开放公网 HTTP 端口。
 
 完整部署方式见 [部署与配置](docs/DEPLOYMENT.md)。
 
