@@ -37,6 +37,7 @@ Close the tab, lose the network, or restart the web service. The job remains in 
 git clone https://github.com/DarranLiu/Easy-Web-Vibecoding.git
 cd Easy-Web-Vibecoding
 
+mkdir -p "$HOME/projects"
 export CC_WEB_ROOTS="$HOME/projects"
 export CC_WEB_DEFAULT_DIR="$HOME/projects"
 ./run.sh
@@ -51,6 +52,14 @@ http://127.0.0.1:8000
 ```
 
 The host needs Python 3.10+ and `tmux`. Install and sign in to Claude Code, Codex, or OpenCode separately; this project does not store their API keys. Read the [deployment guide](docs/DEPLOYMENT.en.md) before exposing it through a reverse proxy or tunnel.
+
+If the server is remote, keep `./run.sh` running there. In a terminal **on your own computer**, forward a local port over SSH (replace `your-user@your-server` with your SSH destination):
+
+```bash
+ssh -N -L 18000:127.0.0.1:8000 your-user@your-server
+```
+
+Keep that SSH connection open, visit `http://127.0.0.1:18000` in your local browser, and enter the access token from the server. For a server running on the same computer as your browser, use `http://127.0.0.1:8000` directly. This first-run route needs no public HTTP port.
 
 ## Visual tour
 
